@@ -1,0 +1,146 @@
+{
+  "_comment": "EuroNCAP protocol thresholds. Update these when protocols change - no code edits needed.",
+  "_README": [
+    "Edit VALUES only - never the Python. Any key starting with '_' is documentation and is ignored by the loader.",
+    "Numbers (lane_width_m, junction_radius_m, expected_decel_ms2, speed_sanity_max_kmh, ...) - just change the value.",
+    "Add a NEW scenario type: add ONE entry under 'scenarios' keyed by its tag (e.g. 'CCRm' or 'CPNA-75'). Its tag is auto-registered for detection - you do NOT need to also edit naming_convention.valid_prefixes.",
+    "A scenario entry needs: type (longitudinal/crossing/head-on), optional vut_speed_range_kmh [min,max], optional target_speed_kmh, impact_overlap_pct, direction.",
+    "Accept a new actor name: add it to vut_entity_names (for the VUT) or encap_actor_names (for targets).",
+    "Add a vehicle/VRU size for the impact geometry: add an entry under vehicle_dimensions keyed by the entity name."
+  ],
+  "protocol_version": "AEB_CC_4.3.1 / AEB_VRU_4.5.1 / Frontal_2026_1.1",
+  "lane_width_m": 3.5,
+  "lane_width_tolerance_m": 0.05,
+  "junction_radius_m": 8.0,
+  "junction_radius_tolerance_m": 0.1,
+  "simulation_time_min_s": 100,
+  "simulation_time_max_s": 150,
+  "impact_tolerance_pct": 5.0,
+  "longitudinal_impact_tolerance_pct": 1.0,
+  "junction_waypoint_radius_m": 20.0,
+  "required_file_extensions": [
+    ".rrscene",
+    ".rrscenario",
+    ".xosc",
+    ".xodr",
+    ".rd",
+    ".xml",
+    ".txt"
+  ],
+  "required_standalone_files": ["TA.xml"],
+  "vut_entity_names": ["VUT", "Ego", "EgoVehicle", "Vehicle"],
+  "encap_actor_names": [
+    "GVT", "EPTa", "EBTa", "EPTc", "EMT", "SOV",
+    "Vehicle", "LargeObstructionVehicle", "SmallObstructionVehicle",
+    "Pedestrian", "Bicyclist", "Motorcyclist"
+  ],
+  "expected_decel_ms2": 4.0,
+  "decel_tolerance_ms2": 0.1,
+  "speed_sanity_max_kmh": 300,
+  "static_target_name_patterns": ["Obstruction", "GVTs", "GVTb", "GVT_S", "StaticVehicle"],
+  "stationary_target_name_patterns": ["EMT", "EPTa", "EPTc", "EBTa"],
+  "simulation_time_by_speed_s": [
+    {"vut_speed_max_kmh": 50,  "min_s": 35, "max_s": 60},
+    {"vut_speed_max_kmh": 90,  "min_s": 40, "max_s": 60},
+    {"vut_speed_max_kmh": 130, "min_s": 45, "max_s": 60}
+  ],
+  "vehicle_dimensions": {
+    "default_car": { "length": 4.5, "width": 1.8 },
+    "VUT": { "length": 4.5, "width": 1.8 },
+    "GVT": { "length": 4.5, "width": 1.8 },
+    "Pedestrian": { "length": 0.5, "width": 0.5 },
+    "Bicyclist": { "length": 1.8, "width": 0.6 },
+    "Motorcyclist": { "length": 2.2, "width": 0.8 }
+  },
+  "naming_convention": {
+    "description": "Scenario name must contain a recognised EuroNCAP scenario tag followed by optional speed suffix",
+    "valid_prefixes": [
+      "CCRs", "CCRb", "CCRm", "CCFtap", "CCFhos", "CCFhol", "CCCscp",
+      "CPNA", "CPFA", "CPNCO", "CPLA", "CPRA",
+      "CBNA", "CBNAO", "CBFA", "CBLA",
+      "CMRs", "CMRb", "CMFtap", "CMCscp",
+      "CPTA"
+    ]
+  },
+  "scenarios": {
+    "CCRs": {
+      "type": "longitudinal",
+      "vut_speed_range_kmh": [10, 80],
+      "target_speed_kmh": 0,
+      "impact_overlap_pct": 50,
+      "direction": "left-to-right"
+    },
+    "CCRb": {
+      "type": "longitudinal",
+      "vut_speed_range_kmh": [12, 79],
+      "impact_overlap_pct": 50,
+      "direction": "left-to-right"
+    },
+    "CCRm": {
+      "type": "longitudinal",
+      "vut_speed_range_kmh": [12, 62],
+      "impact_overlap_pct": 50,
+      "direction": "left-to-right"
+    },
+    "CCFtap": {
+      "type": "crossing",
+      "impact_overlap_pct": 50,
+      "direction": "crossing"
+    },
+    "CCFhos": {
+      "type": "longitudinal",
+      "impact_overlap_pct": 50,
+      "direction": "head-on"
+    },
+    "CCFhol": {
+      "type": "crossing",
+      "impact_overlap_pct": 50,
+      "direction": "crossing"
+    },
+    "CCCscp": {
+      "type": "crossing",
+      "impact_overlap_pct": 50,
+      "direction": "crossing"
+    },
+    "CPNA-25": {
+      "type": "crossing",
+      "vut_speed_range_kmh": [20, 60],
+      "impact_overlap_pct": 25,
+      "direction": "crossing"
+    },
+    "CPNA-50": {
+      "type": "crossing",
+      "vut_speed_range_kmh": [20, 60],
+      "impact_overlap_pct": 50,
+      "direction": "crossing"
+    },
+    "CPNA-75": {
+      "type": "crossing",
+      "vut_speed_range_kmh": [20, 60],
+      "impact_overlap_pct": 75,
+      "direction": "crossing"
+    },
+    "CPFA-50": {
+      "type": "crossing",
+      "vut_speed_range_kmh": [20, 60],
+      "impact_overlap_pct": 50,
+      "direction": "crossing"
+    },
+    "CBNA-50": {
+      "type": "crossing",
+      "vut_speed_range_kmh": [20, 60],
+      "impact_overlap_pct": 50,
+      "direction": "crossing"
+    },
+    "CBLA-25": {
+      "type": "longitudinal",
+      "impact_overlap_pct": 25,
+      "direction": "left-to-right"
+    },
+    "CBLA-50": {
+      "type": "longitudinal",
+      "impact_overlap_pct": 50,
+      "direction": "left-to-right"
+    }
+  }
+}

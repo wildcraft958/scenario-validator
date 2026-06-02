@@ -1,0 +1,1056 @@
+"""Test suite for EuroNCAP scenario validator.
+
+Tests are organised in three layers:
+1. Unit tests for individual parser functions (no external file I/O)
+2. Integration tests using real scenario files - place files in tests/scenarios/
+3. Negative tests (deliberately broken values must produce FAIL)
+
+Run with:
+    python -m pytest tests/ -v
+or:
+    python -m pytest tests/test_checks.py -v
+
+Integration tests are skipped automatically when scenario files are not present.
+To enable them, place real exported scenario files in tests/scenarios/ following
+the expected directory structure documented in the README.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+_ROOT = Path(__file__).parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from src.models import Config
+
+# Integration test fixtures - skipped when not present
+_SCENARIOS_DIR = Path(__file__).parent / "scenarios"
+_XODR_STRAIGHT = _SCENARIOS_DIR / "straight" / "road.xodr"
+_XODR_JUNCTION = _SCENARIOS_DIR / "junction" / "road.xodr"
+_XOSC_SAMPLE   = _SCENARIOS_DIR / "sample" / "scenario.xosc"
+
+_FIXTURES_AVAILABLE = _XODR_STRAIGHT.exists() and _XOSC_SAMPLE.exists()
+
+
+@pytest.fixture(scope="session")
+def config() -> Config:
+    return Config.load()
+
+
+@pytest.fixture(scope="session")
+def xodr_straight(config):
+    if not _XODR_STRAIGHT.exists():
+        pytest.skip("No straight road fixture - place road.xodr in tests/scenarios/straight/")
+    from src.parsers import xodr
+    return xodr.load(_XODR_STRAIGHT)
+
+
+@pytest.fixture(scope="session")
+def xodr_junction(config):
+    if not _XODR_JUNCTION.exists():
+        pytest.skip("No junction fixture - place road.xodr in tests/scenarios/junction/")
+    from src.parsers import xodr
+    return xodr.load(_XODR_JUNCTION)
+
+
+@pytest.fixture(scope="session")
+def xosc_sample(config):
+    if not _XOSC_SAMPLE.exists():
+        pytest.skip("No scenario fixture - place scenario.xosc in tests/scenarios/sample/")
+    from src.parsers import xosc
+    return xosc.load(_XOSC_SAMPLE)
+
+
+# ============================================================
+# Parser unit tests (require fixture files)
+# ============================================================
+
+class TestXodrParser:
+    def test_get_lane_widths_straight(self, xodr_straight):
+        from src.parsers import xodr
+        widths = xodr.get_lane_widths(xodr_straight)
+        assert len(widths) > 0
+        assert all(isinstance(w, float) for w in widths)
+
+    def test_road_count_straight(self, xodr_straight):
+        from src.parsers import xodr
+        count = xodr.get_road_count(xodr_straight)
+        assert count >= 1
+
+    def test_has_junctions_straight(self, xodr_straight):
+        from src.parsers import xodr
+        assert not xodr.has_junctions(xodr_straight)
+
+    def test_has_junctions_junction(self, xodr_junction):
+        from src.parsers import xodr
+        assert xodr.has_junctions(xodr_junction)
+
+    def test_road_markings_present(self, xodr_straight):
+        from src.parsers import xodr
+        markings = xodr.get_road_markings(xodr_straight)
+        assert isinstance(markings, list)
+
+    def test_find_disconnected_roads_clean(self, xodr_straight):
+        from src.parsers import xodr
+        disconnected = xodr.find_disconnected_roads(xodr_straight)
+        assert isinstance(disconnected, list)
+
+
+class TestXodrJunction:
+    def test_junction_radii(self, xodr_junction):
+        from src.parsers import xodr
+        radii = xodr.junction_curvature_radii(xodr_junction)
+        assert isinstance(radii, list)
+
+    def test_shoulder_lane_check(self, xodr_junction):
+        from src.parsers import xodr
+        result = xodr.has_shoulder_lane_at_junction(xodr_junction)
+        assert isinstance(result, bool)
+
+
+class TestXoscParser:
+    def test_get_entities(self, xosc_sample):
+        from src.parsers import xosc
+        entities = xosc.get_entities(xosc_sample)
+        assert len(entities) >= 2
+
+    def test_get_parameter_declarations(self, xosc_sample):
+        from src.parsers import xosc
+        params = xosc.get_parameter_declarations(xosc_sample)
+        assert isinstance(params, list)
+
+    def test_get_simulation_time(self, xosc_sample):
+        from src.parsers import xosc
+        sim_time = xosc.get_simulation_time(xosc_sample)
+        assert sim_time is None or isinstance(sim_time, float)
+
+    def test_get_entity_catalog_filepaths(self, xosc_sample):
+        from src.parsers import xosc
+        paths = xosc.get_entity_catalog_filepaths(xosc_sample)
+        assert isinstance(paths, dict)
+
+
+# ============================================================
+# Road check integration tests
+# ============================================================
+
+class TestRoadChecks:
+    def test_rd_01_lane_width_straight(self, xodr_straight, config):
+        from src.checks.road import check_rd_01
+        result = check_rd_01(xodr_straight, config)
+        assert result.check_id == "CH_RD_01"
+        assert result.status in ("PASS", "FAIL")
+
+    def test_rd_02_road_count_straight(self, xodr_straight, config):
+        from src.checks.road import check_rd_02
+        result = check_rd_02(xodr_straight, config)
+        assert result.check_id == "CH_RD_02"
+
+    def test_rd_03_na_for_no_junction(self, xodr_straight, config):
+        from src.checks.road import check_rd_03
+        result = check_rd_03(xodr_straight, config)
+        assert result.status == "NA"
+
+    def test_rd_03_junction_radius(self, xodr_junction, config):
+        from src.checks.road import check_rd_03
+        result = check_rd_03(xodr_junction, config)
+        assert result.check_id == "CH_RD_03"
+        assert result.status in ("PASS", "FAIL", "NA")
+
+    def test_rd_04_na_for_no_junction(self, xodr_straight, config):
+        from src.checks.road import check_rd_04
+        result = check_rd_04(xodr_straight, config)
+        assert result.status == "NA"
+
+    def test_rd_06_no_shoulder_straight(self, xodr_straight, config):
+        from src.checks.road import check_rd_06
+        result = check_rd_06(xodr_straight, config)
+        assert result.status == "NA"
+
+
+# ============================================================
+# Scenario check integration tests
+# ============================================================
+
+class TestScenarioChecks:
+    @pytest.fixture(autouse=True)
+    def _skip_if_no_fixture(self):
+        if not _XOSC_SAMPLE.exists():
+            pytest.skip("No scenario fixture - place scenario.xosc in tests/scenarios/sample/")
+
+    def test_sc_01_parameters(self, xosc_sample, config):
+        from src.checks.scenario import check_sc_01
+        result = check_sc_01(xosc_sample, config)
+        assert result.check_id == "CH_SC_01"
+        assert result.status in ("PASS", "FAIL", "MANUAL_REVIEW")
+
+    def test_sc_04_simulation_time(self, xosc_sample, config):
+        from src.checks.scenario import check_sc_04
+        result = check_sc_04(xosc_sample, config)
+        assert result.check_id == "CH_SC_04"
+        assert result.status in ("PASS", "FAIL", "NA")
+
+    def test_sc_07_clothoid(self, xosc_sample, config):
+        from src.checks.scenario import check_sc_07
+        result = check_sc_07(xosc_sample, config)
+        assert result.check_id == "CH_SC_07"
+        assert result.status in ("NA", "PASS", "FAIL")
+
+    def test_sc_08_always_manual(self, xosc_sample, config):
+        from src.checks.scenario import check_sc_08
+        result = check_sc_08(xosc_sample, config)
+        assert result.status == "MANUAL_REVIEW"
+
+    def test_sc_22_asset_check(self, xosc_sample, config):
+        from src.checks.scenario import check_sc_22
+        result = check_sc_22(xosc_sample, config)
+        assert result.check_id == "CH_SC_22"
+        assert result.status in ("PASS", "FAIL", "MANUAL_REVIEW")
+
+
+# ============================================================
+# Model desk checks
+# ============================================================
+
+class TestModelDeskChecks:
+    def test_md_01_clean_straight_road(self, xodr_straight, config):
+        from src.checks.model_desk import check_md_01
+        result = check_md_01(xodr_straight)
+        assert result.check_id == "CH_MD_01"
+        assert result.status in ("PASS", "FAIL")
+
+    def test_md_05_no_rd_data(self):
+        from src.checks.model_desk import check_md_05
+        result = check_md_05({"routes": []}, is_junction_scenario=False)
+        assert result.check_id == "CH_MD_05"
+        assert result.status == "PASS"
+
+
+# ============================================================
+# Negative / deliberate failure tests (no external files needed)
+# ============================================================
+
+def _parse_xml(data: bytes):
+    """Parse raw XML bytes using lxml's secure parser."""
+    import io
+    from lxml import etree
+    parser = etree.XMLParser(no_network=True, resolve_entities=False, load_dtd=False)
+    return etree.parse(io.BytesIO(data), parser).getroot()
+
+
+class TestNamingChecks:
+    def test_nm_01_non_encap_actor_name_fails(self, config, tmp_path):
+        """Actor named 'MyCustomCar' (not an EuroNCAP name) should fail CH_NM_01."""
+        xosc = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="CCRs_Test" author="Test"/>
+          <Entities>
+            <ScenarioObject name="Ego"><Vehicle name="Ego"/></ScenarioObject>
+            <ScenarioObject name="MyCustomCar"><Vehicle name="MyCustomCar"/></ScenarioObject>
+          </Entities>
+        </OpenSCENARIO>"""
+        (tmp_path / "test.xosc").write_bytes(xosc)
+        from src.checks.naming import check_nm_01
+        result = check_nm_01(tmp_path, config)
+        assert result.status == "FAIL"
+        assert "MyCustomCar" in result.comment
+
+    def test_nm_01_encap_actors_pass(self, config, tmp_path):
+        """Ego + GVT both follow EuroNCAP convention - should pass CH_NM_01."""
+        xosc = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="CCRs_Test" author="Test"/>
+          <Entities>
+            <ScenarioObject name="Ego"><Vehicle name="Ego"/></ScenarioObject>
+            <ScenarioObject name="GVT"><Vehicle name="GVT"/></ScenarioObject>
+          </Entities>
+        </OpenSCENARIO>"""
+        (tmp_path / "test.xosc").write_bytes(xosc)
+        from src.checks.naming import check_nm_01
+        result = check_nm_01(tmp_path, config)
+        assert result.status == "PASS"
+
+    def test_nm_01_vehicle2_prefix_passes(self, config, tmp_path):
+        """Vehicle2 starts with 'Vehicle' prefix (EuroNCAP convention) - should pass."""
+        xosc = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="CCFtap_Test" author="Test"/>
+          <Entities>
+            <ScenarioObject name="VUT"><Vehicle name="VUT"/></ScenarioObject>
+            <ScenarioObject name="Vehicle2"><Vehicle name="Vehicle2"/></ScenarioObject>
+          </Entities>
+        </OpenSCENARIO>"""
+        (tmp_path / "test.xosc").write_bytes(xosc)
+        from src.checks.naming import check_nm_01
+        result = check_nm_01(tmp_path, config)
+        assert result.status == "PASS"
+
+    def test_nm_01_no_vut_fails(self, config, tmp_path):
+        """No recognised VUT entity should fail CH_NM_01."""
+        xosc = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="Test" author="Test"/>
+          <Entities>
+            <ScenarioObject name="GVT"><Vehicle name="GVT"/></ScenarioObject>
+          </Entities>
+        </OpenSCENARIO>"""
+        (tmp_path / "test.xosc").write_bytes(xosc)
+        from src.checks.naming import check_nm_01
+        result = check_nm_01(tmp_path, config)
+        assert result.status == "FAIL"
+
+    def test_nm_01_no_xosc_manual_review(self, config, tmp_path):
+        """Missing .xosc should return MANUAL_REVIEW, not crash."""
+        from src.checks.naming import check_nm_01
+        result = check_nm_01(tmp_path, config)
+        assert result.status == "MANUAL_REVIEW"
+
+
+class TestNegativeChecks:
+    def test_rd_01_wrong_lane_width(self, config):
+        """Lane width 3.0 m should fail CH_RD_01."""
+        xml = b"""<?xml version="1.0"?>
+        <OpenDRIVE>
+          <road id="1" length="200" junction="-1">
+            <link/>
+            <planView><geometry x="0" y="0" hdg="0" length="200"><line/></geometry></planView>
+            <lanes>
+              <laneSection s="0">
+                <right>
+                  <lane id="-1" type="driving">
+                    <width sOffset="0" a="3.0" b="0" c="0" d="0"/>
+                    <roadMark type="solid"/>
+                  </lane>
+                </right>
+              </laneSection>
+            </lanes>
+          </road>
+        </OpenDRIVE>"""
+        root = _parse_xml(xml)
+        from src.checks.road import check_rd_01
+        result = check_rd_01(root, config)
+        assert result.status == "FAIL"
+
+    def test_rd_02_single_road_fails(self, config):
+        """Single road segment should fail CH_RD_02."""
+        xml = b"""<?xml version="1.0"?>
+        <OpenDRIVE>
+          <road id="1" length="200" junction="-1">
+            <link/>
+            <planView><geometry x="0" y="0" hdg="0" length="200"><line/></geometry></planView>
+            <lanes><laneSection s="0"><right><lane id="-1" type="driving">
+              <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+            </lane></right></laneSection></lanes>
+          </road>
+        </OpenDRIVE>"""
+        root = _parse_xml(xml)
+        from src.checks.road import check_rd_02
+        result = check_rd_02(root, config)
+        assert result.status == "FAIL"
+
+    def test_sc_04_speed_dependent_below_minimum(self, config):
+        """Simulation time 25s with VUT at 30 km/h (8.33 m/s) should fail - below 35s minimum."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="CCRs_Test" author="Test"/>
+          <Entities>
+            <ScenarioObject name="Ego"><Vehicle name="Ego"/></ScenarioObject>
+          </Entities>
+          <Init>
+            <Actions>
+              <Private entityRef="Ego">
+                <PrivateAction>
+                  <LongitudinalAction>
+                    <SpeedAction><SpeedActionTarget>
+                      <AbsoluteTargetSpeed value="8.33"/>
+                    </SpeedActionTarget></SpeedAction>
+                  </LongitudinalAction>
+                </PrivateAction>
+              </Private>
+            </Actions>
+          </Init>
+          <Storyboard>
+            <StopTrigger>
+              <ConditionGroup>
+                <Condition name="Stop" delay="0" conditionEdge="none">
+                  <ByValueCondition>
+                    <SimulationTimeCondition value="25" rule="greaterThan"/>
+                  </ByValueCondition>
+                </Condition>
+              </ConditionGroup>
+            </StopTrigger>
+          </Storyboard>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_04
+        result = check_sc_04(root, config)
+        assert result.status == "FAIL", f"Expected FAIL for 25s at 30 km/h, got {result.status}: {result.comment}"
+
+    def test_sc_04_speed_dependent_in_range(self, config):
+        """Simulation time 50s with VUT at 30 km/h should pass (35-60s band)."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="CCRs_Test" author="Test"/>
+          <Entities>
+            <ScenarioObject name="Ego"><Vehicle name="Ego"/></ScenarioObject>
+          </Entities>
+          <Init>
+            <Actions>
+              <Private entityRef="Ego">
+                <PrivateAction>
+                  <LongitudinalAction>
+                    <SpeedAction><SpeedActionTarget>
+                      <AbsoluteTargetSpeed value="8.33"/>
+                    </SpeedActionTarget></SpeedAction>
+                  </LongitudinalAction>
+                </PrivateAction>
+              </Private>
+            </Actions>
+          </Init>
+          <Storyboard>
+            <StopTrigger>
+              <ConditionGroup>
+                <Condition name="Stop" delay="0" conditionEdge="none">
+                  <ByValueCondition>
+                    <SimulationTimeCondition value="50" rule="greaterThan"/>
+                  </ByValueCondition>
+                </Condition>
+              </ConditionGroup>
+            </StopTrigger>
+          </Storyboard>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_04
+        result = check_sc_04(root, config)
+        assert result.status == "PASS", f"Expected PASS for 50s at 30 km/h, got {result.status}: {result.comment}"
+
+    def test_sc_04_out_of_range_time(self, config):
+        """Simulation time of 200s should fail CH_SC_04."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="Test" author="Test"/>
+          <Storyboard>
+            <StopTrigger>
+              <ConditionGroup>
+                <Condition name="StopCond" delay="0" conditionEdge="none">
+                  <ByValueCondition>
+                    <SimulationTimeCondition value="200" rule="greaterThan"/>
+                  </ByValueCondition>
+                </Condition>
+              </ConditionGroup>
+            </StopTrigger>
+          </Storyboard>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_04
+        result = check_sc_04(root, config)
+        assert result.status == "FAIL"
+
+    def test_sc_14_vut_never_included_as_static(self, config):
+        """VUT must never be checked as a static target even if its name contains 'obstruction'."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="Test"/>
+          <Entities>
+            <ScenarioObject name="Ego"><Vehicle name="Ego"/></ScenarioObject>
+            <ScenarioObject name="GVTs"><Vehicle name="GVTs"/></ScenarioObject>
+          </Entities>
+          <Init>
+            <Actions>
+              <Private entityRef="Ego">
+                <PrivateAction><LongitudinalAction><SpeedAction><SpeedActionTarget>
+                  <AbsoluteTargetSpeed value="20"/>
+                </SpeedActionTarget></SpeedAction></LongitudinalAction></PrivateAction>
+              </Private>
+              <Private entityRef="GVTs">
+                <PrivateAction><LongitudinalAction><SpeedAction><SpeedActionTarget>
+                  <AbsoluteTargetSpeed value="0"/>
+                </SpeedActionTarget></SpeedAction></LongitudinalAction></PrivateAction>
+              </Private>
+            </Actions>
+          </Init>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_14
+        result = check_sc_14(root, config)
+        # GVTs matches "GVTs" pattern → PASS (0 m/s). VUT "Ego" must not be evaluated.
+        assert result.status in ("PASS", "NA")
+
+    def test_sc_14_non_zero_speed_fails(self, config):
+        """Static target with 5 m/s should fail CH_SC_14."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="CCRs_Test"/>
+          <Entities>
+            <ScenarioObject name="VUT"><Vehicle name="VUT"/></ScenarioObject>
+            <ScenarioObject name="GVTs"><Vehicle name="GVTs"/></ScenarioObject>
+          </Entities>
+          <Init>
+            <Actions>
+              <Private entityRef="VUT">
+                <PrivateAction>
+                  <LongitudinalAction>
+                    <SpeedAction><SpeedActionTarget>
+                      <AbsoluteTargetSpeed value="20"/>
+                    </SpeedActionTarget></SpeedAction>
+                  </LongitudinalAction>
+                </PrivateAction>
+              </Private>
+              <Private entityRef="GVTs">
+                <PrivateAction>
+                  <LongitudinalAction>
+                    <SpeedAction><SpeedActionTarget>
+                      <AbsoluteTargetSpeed value="5"/>
+                    </SpeedActionTarget></SpeedAction>
+                  </LongitudinalAction>
+                </PrivateAction>
+              </Private>
+            </Actions>
+          </Init>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_14
+        result = check_sc_14(root, config)
+        assert result.status == "FAIL"
+
+    def test_sc_02_accepts_lane_position(self, config):
+        """VUT placed via LanePosition (not WorldPosition) must PASS CH_SC_02, not false-FAIL.
+
+        Regression for real Vector NCAP scenarios that position actors with
+        <LanePosition> inside the Init TeleportAction.
+        """
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="CCRs_Test"/>
+          <Entities>
+            <ScenarioObject name="Ego"><Vehicle name="Ego"/></ScenarioObject>
+          </Entities>
+          <Storyboard><Init><Actions>
+            <Private entityRef="Ego">
+              <PrivateAction><TeleportAction><Position>
+                <LanePosition roadId="0" laneId="-1" s="50" offset="0"/>
+              </Position></TeleportAction></PrivateAction>
+            </Private>
+          </Actions></Init></Storyboard>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_02
+        result = check_sc_02(root, config)
+        assert result.status == "PASS", f"LanePosition should pass, got {result.status}: {result.comment}"
+
+    def test_identify_vut_does_not_substring_match(self, config):
+        """Regression: entity named 'GVT_Vehicle_1' must NOT be identified as VUT.
+        Before fix, _identify_vut used 'in' (substring), so 'Vehicle' in 'GVT_Vehicle_1'
+        returned True, mis-identifying the target. Now uses exact match."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="Test"/>
+          <Entities>
+            <ScenarioObject name="GVT_Vehicle_1"><Vehicle name="GVT_Vehicle_1"/></ScenarioObject>
+          </Entities>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_02
+        result = check_sc_02(root, config)
+        assert result.status == "MANUAL_REVIEW", (
+            f"Expected MANUAL_REVIEW (no VUT found), got {result.status}: {result.comment}"
+        )
+
+
+# ============================================================
+# Geometry tests (no external files needed)
+# ============================================================
+
+class TestModelReviewChecks:
+    def _braking_xosc(self, decel_value: str) -> bytes:
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="CCRb_Test" author="Test"/>
+          <Entities>
+            <ScenarioObject name="Ego"><Vehicle name="Ego"/></ScenarioObject>
+            <ScenarioObject name="GVT"><Vehicle name="GVT"/></ScenarioObject>
+          </Entities>
+          <Storyboard>
+            <Story name="GVT_Braking">
+              <Act name="Act">
+                <ManeuverGroup name="MG" maximumExecutionCount="1">
+                  <Actors selectTriggeringEntities="false">
+                    <EntityRef entityRef="GVT"/>
+                  </Actors>
+                  <Maneuver name="M">
+                    <Event name="E" priority="overwrite">
+                      <Action name="A">
+                        <PrivateAction>
+                          <LongitudinalAction>
+                            <SpeedAction>
+                              <SpeedActionDynamics dynamicsDimension="rate" dynamicsShape="linear" value="{decel_value}"/>
+                              <SpeedActionTarget>
+                                <AbsoluteTargetSpeed value="0"/>
+                              </SpeedActionTarget>
+                            </SpeedAction>
+                          </LongitudinalAction>
+                        </PrivateAction>
+                      </Action>
+                      <StartTrigger/>
+                    </Event>
+                  </Maneuver>
+                </ManeuverGroup>
+                <StartTrigger/>
+              </Act>
+            </Story>
+            <StopTrigger/>
+          </Storyboard>
+        </OpenSCENARIO>""".encode()
+
+    def test_mr_02_na_for_non_braking_scenario(self, config):
+        """Scenario with no linear-rate decel action -> NA."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="CCRs_Test"/>
+          <Entities>
+            <ScenarioObject name="Ego"><Vehicle name="Ego"/></ScenarioObject>
+            <ScenarioObject name="GVT"><Vehicle name="GVT"/></ScenarioObject>
+          </Entities>
+          <Storyboard><StopTrigger/></Storyboard>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.model_review import check_mr_02
+        result = check_mr_02(root, config)
+        assert result.status == "NA"
+
+    def test_mr_02_pass_correct_decel(self, config):
+        """GVT decel = 4.0 m/s² (expected) -> PASS."""
+        root = _parse_xml(self._braking_xosc("4.0"))
+        from src.checks.model_review import check_mr_02
+        result = check_mr_02(root, config)
+        assert result.status == "PASS", f"Expected PASS for 4.0 m/s², got {result.status}: {result.comment}"
+
+    def test_mr_02_fail_wrong_decel(self, config):
+        """GVT decel = 2.0 m/s² (wrong) -> FAIL."""
+        root = _parse_xml(self._braking_xosc("2.0"))
+        from src.checks.model_review import check_mr_02
+        result = check_mr_02(root, config)
+        assert result.status == "FAIL", f"Expected FAIL for 2.0 m/s², got {result.status}: {result.comment}"
+
+    def test_mr_02_manual_review_parameterized_decel(self, config):
+        """Decel value is $GVT_deceleration param that resolves to 2.0 -> FAIL (resolved from ParameterDeclaration)."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="CCRb_vectorgrp_style"/>
+          <ParameterDeclarations>
+            <ParameterDeclaration name="GVT_deceleration" parameterType="double" value="2"/>
+          </ParameterDeclarations>
+          <Entities>
+            <ScenarioObject name="Ego"><Vehicle name="Ego"/></ScenarioObject>
+            <ScenarioObject name="GVT"><Vehicle name="GVT"/></ScenarioObject>
+          </Entities>
+          <Storyboard>
+            <Story name="GVT_Braking">
+              <Act name="Act">
+                <ManeuverGroup name="MG" maximumExecutionCount="1">
+                  <Actors selectTriggeringEntities="false">
+                    <EntityRef entityRef="GVT"/>
+                  </Actors>
+                  <Maneuver name="M">
+                    <Event name="E" priority="overwrite">
+                      <Action name="A">
+                        <PrivateAction>
+                          <LongitudinalAction>
+                            <SpeedAction>
+                              <SpeedActionDynamics dynamicsDimension="rate" dynamicsShape="linear" value="$GVT_deceleration"/>
+                              <SpeedActionTarget><AbsoluteTargetSpeed value="0"/></SpeedActionTarget>
+                            </SpeedAction>
+                          </LongitudinalAction>
+                        </PrivateAction>
+                      </Action>
+                      <StartTrigger/>
+                    </Event>
+                  </Maneuver>
+                </ManeuverGroup>
+                <StartTrigger/>
+              </Act>
+            </Story>
+            <StopTrigger/>
+          </Storyboard>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.model_review import check_mr_02
+        result = check_mr_02(root, config)
+        # $GVT_deceleration resolves to 2 m/s² from ParameterDeclaration -> FAIL (not 4.0)
+        assert result.status == "FAIL", (
+            f"vectorgrp CCR base scenario uses GVT_deceleration=2 m/s² (CCRs default), "
+            f"expected FAIL (protocol requires 4.0). Got {result.status}: {result.comment}"
+        )
+
+    def test_mr_02_pass_parameterized_correct_decel(self, config):
+        """$GVT_deceleration resolves to 4.0 via ParameterDeclaration -> PASS."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="CCRb_CorrectDecel"/>
+          <ParameterDeclarations>
+            <ParameterDeclaration name="GVT_deceleration" parameterType="double" value="4.0"/>
+          </ParameterDeclarations>
+          <Entities>
+            <ScenarioObject name="Ego"><Vehicle name="Ego"/></ScenarioObject>
+            <ScenarioObject name="GVT"><Vehicle name="GVT"/></ScenarioObject>
+          </Entities>
+          <Storyboard>
+            <Story name="GVT_Braking">
+              <Act name="Act">
+                <ManeuverGroup name="MG" maximumExecutionCount="1">
+                  <Actors selectTriggeringEntities="false">
+                    <EntityRef entityRef="GVT"/>
+                  </Actors>
+                  <Maneuver name="M">
+                    <Event name="E" priority="overwrite">
+                      <Action name="A">
+                        <PrivateAction>
+                          <LongitudinalAction>
+                            <SpeedAction>
+                              <SpeedActionDynamics dynamicsDimension="rate" dynamicsShape="linear" value="$GVT_deceleration"/>
+                              <SpeedActionTarget><AbsoluteTargetSpeed value="0"/></SpeedActionTarget>
+                            </SpeedAction>
+                          </LongitudinalAction>
+                        </PrivateAction>
+                      </Action>
+                      <StartTrigger/>
+                    </Event>
+                  </Maneuver>
+                </ManeuverGroup>
+                <StartTrigger/>
+              </Act>
+            </Story>
+            <StopTrigger/>
+          </Storyboard>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.model_review import check_mr_02
+        result = check_mr_02(root, config)
+        assert result.status == "PASS", f"Expected PASS when $GVT_deceleration=4.0, got {result.status}: {result.comment}"
+
+
+class TestModelReviewSpeedSanity:
+    """CH_MR_01 - garbage/incorrect speed values for VUT and Asset."""
+
+    def _xosc_with_speeds(self, vut_speed: str, target_speed: str) -> bytes:
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="CCRs_Test"/>
+          <Entities>
+            <ScenarioObject name="Ego"><Vehicle name="Ego"/></ScenarioObject>
+            <ScenarioObject name="GVT"><Vehicle name="GVT"/></ScenarioObject>
+          </Entities>
+          <Init>
+            <Actions>
+              <Private entityRef="Ego">
+                <PrivateAction><LongitudinalAction><SpeedAction><SpeedActionTarget>
+                  <AbsoluteTargetSpeed value="{vut_speed}"/>
+                </SpeedActionTarget></SpeedAction></LongitudinalAction></PrivateAction>
+              </Private>
+              <Private entityRef="GVT">
+                <PrivateAction><LongitudinalAction><SpeedAction><SpeedActionTarget>
+                  <AbsoluteTargetSpeed value="{target_speed}"/>
+                </SpeedActionTarget></SpeedAction></LongitudinalAction></PrivateAction>
+              </Private>
+            </Actions>
+          </Init>
+        </OpenSCENARIO>""".encode()
+
+    def test_mr_01_pass_sane_speeds(self, config):
+        root = _parse_xml(self._xosc_with_speeds("13.89", "0"))
+        from src.checks.model_review import check_mr_01
+        result = check_mr_01(root, config)
+        assert result.check_id == "CH_MR_01"
+        assert result.status == "PASS", f"got {result.status}: {result.comment}"
+
+    def test_mr_01_fail_negative_speed(self, config):
+        root = _parse_xml(self._xosc_with_speeds("-5", "0"))
+        from src.checks.model_review import check_mr_01
+        result = check_mr_01(root, config)
+        assert result.status == "FAIL"
+        assert "negative" in result.comment.lower()
+
+    def test_mr_01_fail_absurd_speed(self, config):
+        """600 km/h = 166.7 m/s is above the 300 km/h sanity bound -> FAIL."""
+        root = _parse_xml(self._xosc_with_speeds("166.7", "0"))
+        from src.checks.model_review import check_mr_01
+        result = check_mr_01(root, config)
+        assert result.status == "FAIL"
+
+    def test_mr_01_na_no_speeds(self, config):
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="CCRs_Test"/>
+          <Entities>
+            <ScenarioObject name="Ego"><Vehicle name="Ego"/></ScenarioObject>
+          </Entities>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.model_review import check_mr_01
+        result = check_mr_01(root, config)
+        assert result.status == "NA"
+
+
+class TestFunctionalBlock:
+    """CH_FB_01 - TA file provisioning (relabeled from the old CH_MR_01)."""
+
+    def test_fb_01_present_manual_review(self, config, tmp_path):
+        (tmp_path / "TA.xml").touch()
+        from src.checks.functional_block import check_fb_01
+        result = check_fb_01(tmp_path, config)
+        assert result.check_id == "CH_FB_01"
+        assert result.category == "FunctionalBlock"
+        assert result.status == "MANUAL_REVIEW"
+
+    def test_fb_01_missing_fails(self, config, tmp_path):
+        from src.checks.functional_block import check_fb_01
+        result = check_fb_01(tmp_path, config)
+        assert result.check_id == "CH_FB_01"
+        assert result.status == "FAIL"
+
+
+class TestGeometry:
+    def test_50pct_overlap_static(self):
+        from src.geometry import VehicleState, lateral_offset_percentage
+        vut    = VehicleState(x=0, y=0,   heading_deg=0, length=4.5, width=1.8, speed_ms=0)
+        target = VehicleState(x=0, y=0.9, heading_deg=0, length=4.5, width=1.8, speed_ms=0)
+        pct = lateral_offset_percentage(vut, target)
+        assert 40 <= pct <= 60, f"Expected ~50%, got {pct:.1f}%"
+
+    def test_100pct_overlap(self):
+        from src.geometry import VehicleState, lateral_offset_percentage
+        vut    = VehicleState(x=0, y=0, heading_deg=0, length=4.5, width=1.8, speed_ms=0)
+        target = VehicleState(x=0, y=0, heading_deg=0, length=4.5, width=1.8, speed_ms=0)
+        pct = lateral_offset_percentage(vut, target)
+        assert pct >= 95.0, f"Expected ~100%, got {pct:.1f}%"
+
+    def test_zero_overlap(self):
+        from src.geometry import VehicleState, lateral_offset_percentage
+        vut    = VehicleState(x=0, y=0,  heading_deg=0, length=4.5, width=1.8, speed_ms=0)
+        target = VehicleState(x=0, y=20, heading_deg=0, length=4.5, width=1.8, speed_ms=0)
+        pct = lateral_offset_percentage(vut, target)
+        assert pct < 1.0, f"Expected ~0%, got {pct:.1f}%"
+
+    def test_longitudinal_impact_projection(self):
+        from src.geometry import VehicleState, compute_impact_percentage
+        vut    = VehicleState(x=-30, y=0, heading_deg=0, length=4.5, width=1.8, speed_ms=14.0)
+        target = VehicleState(x=0,   y=0, heading_deg=0, length=4.5, width=1.8, speed_ms=0.0)
+        pct = compute_impact_percentage(vut, target, scenario_type="longitudinal")
+        assert pct > 10, f"Expected meaningful overlap for head-on longitudinal, got {pct:.1f}%"
+
+
+# ============================================================
+# Config tests (no external files needed)
+# ============================================================
+
+class TestConfig:
+    def test_config_loads(self, config):
+        assert config.lane_width_m == 3.5
+        assert config.junction_radius_m == 8.0
+        assert config.simulation_time_min_s == 100
+        assert config.simulation_time_max_s == 150
+
+    def test_scenario_protocol_lookup(self, config):
+        proto = config.scenario_protocol("CCRs")
+        assert proto is not None
+        assert proto.type == "longitudinal"
+
+    def test_vut_dims(self, config):
+        dims = config.vut_dims()
+        assert dims.length > 0
+        assert dims.width > 0
+
+
+# ============================================================
+# Full pipeline tests (no external files needed)
+# ============================================================
+
+class TestFullPipeline:
+    def test_run_validation_synthetic(self, tmp_path):
+        """
+        Build a minimal synthetic scenario directory and run the full validation pipeline.
+        Verifies the pipeline runs without crashing and returns structured results.
+        """
+        xodr = b"""<?xml version="1.0"?>
+        <OpenDRIVE>
+          <road id="1" length="200" junction="-1">
+            <link><successor elementType="road" elementId="2" contactPoint="start"/></link>
+            <planView><geometry x="0" y="0" hdg="0" length="200"><line/></geometry></planView>
+            <lanes><laneSection s="0"><right>
+              <lane id="-1" type="driving">
+                <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+                <roadMark type="solid" weight="standard"/>
+              </lane>
+            </right></laneSection></lanes>
+          </road>
+          <road id="2" length="200" junction="-1">
+            <link><predecessor elementType="road" elementId="1" contactPoint="end"/></link>
+            <planView><geometry x="200" y="0" hdg="0" length="200"><line/></geometry></planView>
+            <lanes><laneSection s="0"><right>
+              <lane id="-1" type="driving">
+                <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+                <roadMark type="solid" weight="standard"/>
+              </lane>
+            </right></laneSection></lanes>
+          </road>
+        </OpenDRIVE>"""
+
+        xosc = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="CCRs_Test" author="Test"/>
+          <ParameterDeclarations>
+            <ParameterDeclaration name="Ego_speed_kph" parameterType="double" value="50"/>
+          </ParameterDeclarations>
+          <RoadNetwork>
+            <LogicFile filepath="CCRs.xodr"/>
+          </RoadNetwork>
+          <Entities>
+            <ScenarioObject name="Ego">
+              <Vehicle name="Ego" vehicleCategory="car">
+                <Properties><Property name="filepath" value="NCAP/Assets/Car.fbx"/></Properties>
+              </Vehicle>
+            </ScenarioObject>
+            <ScenarioObject name="Target">
+              <Vehicle name="Target" vehicleCategory="car">
+                <Properties><Property name="filepath" value="NCAP/Assets/GVT.fbx"/></Properties>
+              </Vehicle>
+            </ScenarioObject>
+          </Entities>
+          <Storyboard>
+            <Init>
+              <Actions>
+                <Private entityRef="Ego">
+                  <PrivateAction>
+                    <TeleportAction>
+                      <Position><LanePosition roadId="1" laneId="-1" s="10" offset="0"/></Position>
+                    </TeleportAction>
+                  </PrivateAction>
+                  <PrivateAction>
+                    <LongitudinalAction>
+                      <SpeedAction><SpeedActionTarget>
+                        <AbsoluteTargetSpeed value="13.89"/>
+                      </SpeedActionTarget></SpeedAction>
+                    </LongitudinalAction>
+                  </PrivateAction>
+                </Private>
+                <Private entityRef="Target">
+                  <PrivateAction>
+                    <TeleportAction>
+                      <Position><WorldPosition x="100" y="0" z="0" h="0"/></Position>
+                    </TeleportAction>
+                  </PrivateAction>
+                  <PrivateAction>
+                    <LongitudinalAction>
+                      <SpeedAction><SpeedActionTarget>
+                        <AbsoluteTargetSpeed value="0"/>
+                      </SpeedActionTarget></SpeedAction>
+                    </LongitudinalAction>
+                  </PrivateAction>
+                </Private>
+              </Actions>
+            </Init>
+            <Story name="Story">
+              <Act name="Act">
+                <ManeuverGroup name="MG" maximumExecutionCount="1">
+                  <Actors selectTriggeringEntities="false">
+                    <EntityRef entityRef="Ego"/>
+                  </Actors>
+                  <Maneuver name="M">
+                    <Event name="E" priority="overwrite">
+                      <Action name="A">
+                        <PrivateAction>
+                          <RoutingAction>
+                            <FollowTrajectoryAction>
+                              <TimeReference><Timing domainAbsoluteRelative="relative" scale="1" offset="0"/></TimeReference>
+                              <Trajectory name="T" closed="false">
+                                <Shape><Polyline>
+                                  <Vertex><Position><WorldPosition x="10" y="0" z="0" h="0"/></Position></Vertex>
+                                  <Vertex><Position><WorldPosition x="200" y="0" z="0" h="0"/></Position></Vertex>
+                                </Polyline></Shape>
+                              </Trajectory>
+                            </FollowTrajectoryAction>
+                          </RoutingAction>
+                        </PrivateAction>
+                      </Action>
+                      <StartTrigger/>
+                    </Event>
+                  </Maneuver>
+                </ManeuverGroup>
+                <StartTrigger/>
+              </Act>
+            </Story>
+            <StopTrigger>
+              <ConditionGroup>
+                <Condition name="Stop" delay="0" conditionEdge="none">
+                  <ByValueCondition>
+                    <SimulationTimeCondition value="120" rule="greaterThan"/>
+                  </ByValueCondition>
+                </Condition>
+              </ConditionGroup>
+            </StopTrigger>
+          </Storyboard>
+        </OpenSCENARIO>"""
+
+        scenario_dir = tmp_path / "CCRs_test"
+        scenario_dir.mkdir()
+        (scenario_dir / "CCRs.xodr").write_bytes(xodr)
+        (scenario_dir / "CCRs.xosc").write_bytes(xosc)
+        for ext in ("rrscene", "rrscenario", "rd", "xml", "txt"):
+            (scenario_dir / f"CCRs.{ext}").touch()
+        (scenario_dir / "TA.xml").touch()
+
+        from validator import run_validation
+        results, stats = run_validation(scenario_dir, skip_rd=True)
+
+        assert len(results) > 0
+        assert stats.total > 0
+        assert isinstance(stats.pass_rate, float)
+        parse_errors = {r.check_id: r.comment for r in results
+                        if r.status == "FAIL" and "error" in r.comment.lower()}
+        assert not parse_errors, f"Unexpected parse errors: {parse_errors}"
+
+    def test_excel_report_created(self, tmp_path, config):
+        from src.models import CheckResult, SummaryStats
+        from src.reporter import write_excel
+
+        results = [
+            CheckResult(check_id="CH_NM_01", category="Naming",
+                        description="Test", status="PASS", comment="ok"),
+            CheckResult(check_id="CH_NM_02", category="Naming",
+                        description="Test", status="FAIL", comment="mismatch"),
+            CheckResult(check_id="CH_RD_01", category="Road",
+                        description="Test", status="NA", comment=""),
+        ]
+        stats = SummaryStats(
+            scenario_name="Test_CCRs", run_timestamp="2026-05-25 22:00:00",
+            protocol_version="AEB_CC_4.3.1", total=3, passed=1, failed=1,
+            manual=0, na=1, pass_rate=33.3, critical_failures=["CH_NM_02"],
+        )
+        out = tmp_path / "test_report.xlsx"
+        write_excel(results, stats, out)
+        assert out.exists()
+        assert out.stat().st_size > 0
+
+    def test_csv_report_created(self, tmp_path):
+        from src.models import CheckResult, SummaryStats
+        from src.reporter import write_csv
+
+        results = [
+            CheckResult(check_id="CH_NM_01", category="Naming",
+                        description="Test", status="PASS", comment="ok"),
+        ]
+        stats = SummaryStats(
+            scenario_name="Test", run_timestamp="2026-05-25 22:00:00",
+            protocol_version="test", total=1, passed=1, failed=0,
+            manual=0, na=0, pass_rate=100.0, critical_failures=[],
+        )
+        out = tmp_path / "test_report.csv"
+        write_csv(results, stats, out)
+        assert out.exists()
+        content = out.read_text()
+        assert "CH_NM_01" in content
+        assert "PASS" in content

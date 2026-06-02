@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Test / tooling
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+pyrightconfig.json
+*.code-workspace
+
+# Runtime outputs (generated per validation run)
+*.log
+Validation_*.xlsx
+Validation_*.csv
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Packaging
+dist/
+build/

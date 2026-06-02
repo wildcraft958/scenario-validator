@@ -1,0 +1,31 @@
+# Hash-verified lockfile for pip --require-hashes
+# Platform: Linux x86_64, Python 3.10
+# Regenerate: pip download --no-deps --dest /tmp/pkgs <packages> && pip hash --algorithm sha256 /tmp/pkgs/*.whl
+#
+# IMPORTANT: These hashes are wheel-specific. If you move to a different OS or
+# Python version, regenerate this file - the wheel filenames change and old hashes
+# will not match. Use requirements-lock.txt (no hashes) for cross-platform installs.
+
+lxml==6.1.1 \
+    --hash=sha256:98fc784c2c1440667aeedf8465bdfe10208acf0ead656a2c68627299f546b315
+
+pydantic==2.12.5 \
+    --hash=sha256:e561593fccf61e8a20fc46dfc2dfe075b8be7d0188df33f221ad1f0139180f9d
+
+pydantic-core==2.41.5 \
+    --hash=sha256:100baa204bb412b74fe285fb0f3a385256dad1d1879f0a5cb1499ed2e83d132a
+
+annotated-types==0.7.0 \
+    --hash=sha256:1f02e8b43a8fbbc3f3e0d4f0f4bfc8131bcb4eebe8849b8e5c773f3a1c582a53
+
+typing_extensions==4.15.0 \
+    --hash=sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548
+
+typing-inspection==0.4.2 \
+    --hash=sha256:4ed1cacbdc298c220f1bd249ed5287caa16f34d44ef4e9c3d0cbad5b521545e7
+
+openpyxl==3.1.5 \
+    --hash=sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2
+
+shapely==2.1.2 \
+    --hash=sha256:e38a190442aacc67ff9f75ce60aec04893041f16f97d242209106d502486a142

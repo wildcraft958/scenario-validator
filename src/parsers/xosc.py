@@ -1,0 +1,306 @@
+"""OpenSCENARIO (.xosc) secure parser with XPath helpers."""
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any
+
+from lxml import etree  # type: ignore[import-untyped]
+
+log = logging.getLogger(__name__)
+
+# Secure lxml parser: no network, no external entity resolution
+_SECURE_PARSER = etree.XMLParser(
+    no_network=True,
+    resolve_entities=False,
+    load_dtd=False,
+)
+
+
+def load(path: Path) -> Any:
+    with path.open("rb") as fh:
+        tree = etree.parse(fh, _SECURE_PARSER)
+    return tree.getroot()
+
+
+def _safe_float(value: str | None) -> float | None:
+    """Convert a string to float, returning None for parameter references (e.g. '$speed')."""
+    if value is None:
+        return None
+    value = value.strip()
+    if value.startswith("$") or value.startswith("%"):
+        return None  # parameter reference, not a literal value
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def xpath(root: Any, query: str) -> list[Any]:
+    return root.xpath(query)
+
+
+def xpath_one(root: Any, query: str, default: Any = None) -> Any:
+    results = root.xpath(query)
+    return results[0] if results else default
+
+
+# ---------- high-level extractors ----------
+
+def get_scenario_name(root: Any) -> str:
+    return xpath_one(root, "//FileHeader/@description") or xpath_one(root, "//FileHeader/@author") or ""
+
+
+def get_entities(root: Any) -> list[Any]:
+    return xpath(root, "//Entities/ScenarioObject")
+
+
+def get_entity_name(entity: Any) -> str:
+    return entity.get("name", "")
+
+
+def get_entity_type(entity: Any) -> str:
+    """Returns 'Vehicle', 'Pedestrian', or 'MiscObject'."""
+    for tag in ("Vehicle", "Pedestrian", "MiscObject"):
+        if entity.xpath(f".//{tag}"):
+            return tag
+    return "Unknown"
+
+
+def get_init_positions(root: Any) -> dict[str, dict[str, float]]:
+    """Returns {entity_name: {x, y, z, h}} from Init section.
+    Skips entities whose positions are parameter references.
+    """
+    positions: dict[str, dict[str, float]] = {}
+    for action in xpath(root, "//Init//Private"):
+        name = action.get("entityRef", "")
+        wp = action.xpath(".//WorldPosition")
+        if wp:
+            w = wp[0]
+            x = _safe_float(w.get("x", "0"))
+            y = _safe_float(w.get("y", "0"))
+            z = _safe_float(w.get("z", "0"))
+            h = _safe_float(w.get("h", "0"))
+            if x is not None and y is not None:
+                positions[name] = {"x": x, "y": y, "z": z or 0.0, "h": h or 0.0}
+    return positions
+
+
+def get_init_positioned_entities(root: Any) -> set[str]:
+    """Returns names of entities that have ANY Init position element.
+
+    Covers WorldPosition, LanePosition, RelativeLanePosition, RoadPosition,
+    RelativeRoadPosition, RelativeWorldPosition, RoutePosition, etc. - so an
+    entity placed via a non-World position still counts as 'positioned'
+    (presence check; exact x,y may need .xodr resolution).
+    """
+    named: set[str] = set()
+    for priv in xpath(root, "//Init//Private"):
+        name = priv.get("entityRef", "")
+        if name and priv.xpath(".//*[contains(local-name(), 'Position')]"):
+            named.add(name)
+    return named
+
+
+def get_init_speed(root: Any, entity_name: str) -> float | None:
+    """Returns the initial speed set via AbsoluteTargetSpeed in Init for an entity.
+    Returns None if value is a parameter reference (e.g. '$speed').
+    """
+    for priv in xpath(root, f"//Init//Private[@entityRef='{entity_name}']"):
+        speed_nodes = priv.xpath(".//AbsoluteTargetSpeed/@value")
+        if speed_nodes:
+            return _safe_float(speed_nodes[0])
+    return None
+
+
+def get_simulation_time(root: Any) -> float | None:
+    """Looks for SimulationTimeCondition value used as a stop trigger."""
+    vals = xpath(root, "//StopTrigger//SimulationTimeCondition/@value")
+    if vals:
+        return _safe_float(vals[0])
+    # Fallback: look anywhere
+    vals = xpath(root, "//SimulationTimeCondition/@value")
+    return _safe_float(vals[0]) if vals else None
+
+
+def get_parameter_declarations(root: Any) -> list[dict[str, str]]:
+    params = []
+    for p in xpath(root, "//ParameterDeclarations/ParameterDeclaration"):
+        params.append({
+            "name": p.get("name", ""),
+            "type": p.get("parameterType", ""),
+            "value": p.get("value", ""),
+        })
+    return params
+
+
+def get_all_waypoints_by_entity(root: Any) -> dict[str, list[dict[str, float]]]:
+    result: dict[str, list[dict[str, float]]] = {}
+    for mg in xpath(root, "//ManeuverGroup"):
+        entity_refs = [e.get("entityRef", "") for e in mg.xpath(".//EntityRef")]
+        wps = [
+            {
+                "x": _safe_float(wp.get("x", "0")) or 0.0,
+                "y": _safe_float(wp.get("y", "0")) or 0.0,
+                "z": _safe_float(wp.get("z", "0")) or 0.0,
+                "h": _safe_float(wp.get("h", "0")) or 0.0,
+            }
+            for wp in mg.xpath(".//Waypoint//WorldPosition")
+        ]
+        for ref in entity_refs:
+            if ref:
+                result.setdefault(ref, []).extend(wps)
+    return result
+
+
+def has_anchor(root: Any, entity_name: str) -> bool:
+    """Returns True if entity has anchoring enabled."""
+    for obj in xpath(root, f"//ScenarioObject[@name='{entity_name}']"):
+        controllers = obj.xpath(".//Controller//Properties//Property")
+        for prop in controllers:
+            if prop.get("name", "").lower() == "anchor" and prop.get("value", "false").lower() != "false":
+                return True
+    return False
+
+
+def get_timing_data_mode(root: Any) -> str | None:
+    """Returns the RelativeTo mode for Waypoint timing in action phase."""
+    vals = xpath(root, "//Timing/@domainAbsoluteRelative")
+    return vals[0] if vals else None
+
+
+def get_route_timing_data_option(root: Any) -> bool:
+    """True if timing data option is checked in RoutingAction."""
+    # In OpenSCENARIO, the presence of Timing element under FollowTrajectoryAction
+    return bool(xpath(root, "//FollowTrajectoryAction//TimeReference//Timing"))
+
+
+def get_entity_lane_positions(root: Any) -> dict[str, dict]:
+    """Returns lane position data for entities from Init LanePosition."""
+    result = {}
+    for priv in xpath(root, "//Init//Private"):
+        name = priv.get("entityRef", "")
+        lp = priv.xpath(".//LanePosition")
+        if lp:
+            el = lp[0]
+            lane_id_raw = el.get("laneId", "0")
+            if lane_id_raw and lane_id_raw.startswith("$"):
+                lane_id = None  # parameterized - caller must handle as MANUAL_REVIEW
+            else:
+                lane_id = int(lane_id_raw) if lane_id_raw else 0
+            result[name] = {
+                "road_id": el.get("roadId", ""),
+                "lane_id": lane_id,
+                "s": _safe_float(el.get("s", "0")) or 0.0,
+                "offset": _safe_float(el.get("offset", "0")) or 0.0,
+            }
+    return result
+
+
+def get_actors_ordered(root: Any) -> list[str]:
+    """Returns actor names in story/act order - VUT should be first."""
+    seen: list[str] = []
+    for ref in xpath(root, "//Story//Act//ManeuverGroup//EntityRef/@entityRef"):
+        if ref not in seen:
+            seen.append(ref)
+    return seen
+
+
+def get_event_trigger_refs(root: Any) -> list[dict]:
+    """Returns event trigger conditions to check CH_SC_19 (target starts after VUT reaches speed)."""
+    triggers = []
+    for cond in xpath(root, "//StartTrigger//ConditionGroup//Condition"):
+        triggers.append({
+            "name": cond.get("name", ""),
+            "type": cond.xpath("EntityCondition") or cond.xpath("ByValueCondition"),
+            "delay": _safe_float(cond.get("delay", "0")) or 0.0,
+        })
+    return triggers
+
+
+def get_entity_catalog_filepaths(root: Any) -> dict[str, str]:
+    """
+    Returns {entity_name: catalog_filepath} from CatalogReference or Properties filepath.
+    Used to verify assets are in the NCAP Asset folder (CH_SC_22).
+    """
+    result: dict[str, str] = {}
+    # Try Properties > Property filepath
+    for obj in xpath(root, "//ScenarioObject"):
+        name = obj.get("name", "")
+        for prop in obj.xpath(".//Properties/Property"):
+            if prop.get("name", "").lower() in ("filepath", "model3d", "model", "resource"):
+                result[name] = prop.get("value", "")
+                break
+    # Try CatalogReference
+    for obj in xpath(root, "//ScenarioObject"):
+        name = obj.get("name", "")
+        if name in result:
+            continue
+        for cat_ref in obj.xpath(".//CatalogReference"):
+            catalog = cat_ref.get("catalogName", "")
+            entry = cat_ref.get("entryName", "")
+            if catalog or entry:
+                result[name] = f"{catalog}/{entry}"
+    return result
+
+
+def get_parameter_value(root: Any, param_name: str) -> str | None:
+    """Returns the default value of a ParameterDeclaration by name, or None."""
+    for p in xpath(root, f"//ParameterDeclarations/ParameterDeclaration[@name='{param_name}']"):
+        return p.get("value")
+    return None
+
+
+def get_braking_decel_actions(root: Any) -> list[dict]:
+    """Finds all linear-rate SpeedAction deceleration events in the Story (action phase).
+
+    Returns list of dicts with keys:
+      entity_name: str
+      rate_ms2: float | None  (None when value is a parameter reference)
+      param_name: str | None  (name of $param if parameterized)
+      shape: str
+      target_speed: float | None
+    """
+    results = []
+    for mg in xpath(root, "//Story//Act//ManeuverGroup"):
+        refs = [e.get("entityRef", "") for e in mg.xpath(".//EntityRef")]
+        for dyn in mg.xpath(".//SpeedActionDynamics[@dynamicsDimension='rate'][@dynamicsShape='linear']"):
+            raw_val = dyn.get("value", "")
+            rate = _safe_float(raw_val)
+            param_name: str | None = None
+            if rate is None and raw_val.startswith("$"):
+                param_ref = raw_val.lstrip("$")
+                param_name = param_ref
+                resolved = get_parameter_value(root, param_ref)
+                rate = _safe_float(resolved)
+
+            parent = dyn.getparent()
+            target_nodes = parent.xpath(".//AbsoluteTargetSpeed/@value") if parent is not None else []
+            target = _safe_float(target_nodes[0]) if target_nodes else None
+
+            for ref in refs:
+                if ref:
+                    results.append({
+                        "entity_name": ref,
+                        "rate_ms2": rate,
+                        "param_name": param_name,
+                        "shape": dyn.get("dynamicsShape", ""),
+                        "target_speed": target,
+                    })
+    return results
+
+
+def get_action_phase_speeds(root: Any, entity_name: str) -> list[float]:
+    """Returns AbsoluteTargetSpeed values from the Story (action phase) for an entity.
+    Used to verify static/stationary actors have Initialize Speed = Absolute(0) in action phase.
+    """
+    speeds = []
+    for mg in xpath(root, "//Story//Act//ManeuverGroup"):
+        refs = [e.get("entityRef", "") for e in mg.xpath(".//EntityRef")]
+        if entity_name not in refs:
+            continue
+        for val in mg.xpath(".//SpeedAction//SpeedActionTarget//AbsoluteTargetSpeed/@value"):
+            v = _safe_float(val)
+            if v is not None:
+                speeds.append(v)
+    return speeds

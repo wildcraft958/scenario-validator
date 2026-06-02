@@ -1,0 +1,11 @@
+# Pinned versions - validated 2026-05-25, Python 3.10
+# Regenerate: pip install -r requirements.txt && pip freeze > requirements-lock.txt
+lxml==6.1.1
+pydantic==2.12.5
+openpyxl==3.1.5
+shapely==2.1.2
+# pydantic runtime deps (auto-installed)
+annotated-types==0.7.0
+pydantic-core==2.41.5
+typing_extensions==4.15.0
+typing-inspection==0.4.2
