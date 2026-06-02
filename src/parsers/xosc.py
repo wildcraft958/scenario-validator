@@ -324,6 +324,53 @@ def get_polyline_curvature_radii(
     return radii
 
 
+def get_polyline_part2_radius(
+    root: Any,
+    entity_name: str,
+    min_heading_delta_rad: float = 0.01,
+    min_segment_length_m: float = 0.01,
+    part2_window_factor: float = 1.2,
+) -> tuple[float | None, str]:
+    """Estimate the Part 2 (constant-radius arc) radius of a turning trajectory.
+
+    The Clothoid-Arc-Clothoid path (Part1-Part2-Part3) has its smallest radius in
+    Part 2. Filtering to radii within part2_window_factor × minimum isolates the
+    constant arc and excludes the transition clothoid sections which have large
+    apparent radii. Returns (radius_m, direction) where direction is "Farside"
+    (positive heading change = left turn) or "Nearside" (negative = right turn).
+    Returns (None, "") when the trajectory has no clear curved section.
+    """
+    import math
+    radii = get_polyline_curvature_radii(root, entity_name, min_heading_delta_rad, min_segment_length_m)
+    if not radii:
+        return None, ""
+
+    min_r = min(radii)
+    # Part 2 radii are the tightest — keep only those within part2_window_factor of minimum
+    part2_radii = [r for r in radii if r <= part2_window_factor * min_r]
+    if not part2_radii:
+        part2_radii = radii  # fallback
+
+    est_radius = sum(part2_radii) / len(part2_radii)
+
+    # Determine turn direction from net heading change over curved section
+    vertices = get_trajectory_vertices(root, entity_name)
+    net_dh = 0.0
+    for i in range(1, len(vertices)):
+        dh = vertices[i]["h"] - vertices[i - 1]["h"]
+        while dh > math.pi:
+            dh -= 2 * math.pi
+        while dh < -math.pi:
+            dh += 2 * math.pi
+        dl = math.hypot(vertices[i]["x"] - vertices[i - 1]["x"],
+                        vertices[i]["y"] - vertices[i - 1]["y"])
+        if abs(dh) > min_heading_delta_rad and dl > min_segment_length_m:
+            net_dh += dh
+
+    direction = "Farside" if net_dh > 0 else "Nearside"
+    return round(est_radius, 2), direction
+
+
 def has_init_follow_trajectory(root: Any, entity_name: str) -> bool:
     """True if the entity's Init section contains a FollowTrajectoryAction."""
     for priv in xpath(root, f"//Init//Private[@entityRef='{entity_name}']"):

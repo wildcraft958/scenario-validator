@@ -333,29 +333,64 @@ def check_sc_07(xosc_root: Any, config: Config) -> CheckResult:
     if not vut:
         return _make("CH_SC_07", "NA", "No Clothoid trajectory and no VUT identified")
 
-    radii = xosc.get_polyline_curvature_radii(
+    # Use Part 2 isolation: filter to ≤ 1.2× minimum radius to strip clothoid transitions.
+    # The minimum curvature radius in the curved section IS the Part 2 constant arc.
+    est_radius, direction = xosc.get_polyline_part2_radius(
         xosc_root, vut,
         min_heading_delta_rad=config.curvature_min_heading_delta_rad,
         min_segment_length_m=config.curvature_min_segment_length_m,
     )
-    if not radii:
-        return _make("CH_SC_07", "NA", "No Clothoid trajectory and VUT heading is constant — not a turning scenario")
+    if est_radius is None:
+        return _make("CH_SC_07", "NA", "VUT heading is constant — not a turning scenario")
 
-    # A discrete polyline approximation of a circular arc produces outlier radius values
-    # at entry/exit transitions even for a perfect constant-radius curve. Use the median
-    # of the lower half to estimate the actual turn radius without transition noise.
-    sorted_r = sorted(radii)
-    median_r = sorted_r[len(sorted_r) // 2]
-    core_radii = [r for r in radii if r <= config.curvature_outlier_factor * median_r]
-    est_radius = (sum(core_radii) / len(core_radii)) if core_radii else median_r
+    # Look up the expected Part 2 radius from the protocol table in config.
+    # Indexed by (vut_speed ≤ vut_speed_max_kmh) and direction.
+    vut_speed_kmh = xosc.get_trajectory_speed_kmh(xosc_root, vut)
+    expected_radius: float | None = None
 
+    if vut_speed_kmh is not None and config.curve_part2_radii_m:
+        # Allow 5% tolerance on the speed boundary — trajectory vertex discretisation
+        # causes the computed peak speed to be slightly above the nominal value
+        # (e.g. 10.035 km/h for a 10 km/h scenario).
+        candidates = [
+            entry for entry in config.curve_part2_radii_m
+            if vut_speed_kmh <= entry["vut_speed_max_kmh"] * 1.05
+            and entry.get("direction", "") == direction
+        ]
+        if candidates:
+            # Pick entry with smallest vut_speed_max_kmh that covers this speed
+            best = min(candidates, key=lambda e: e["vut_speed_max_kmh"])
+            expected_radius = best["radius_m"]
+
+    tol_pct = config.curve_radius_tolerance_pct
+
+    if expected_radius is not None:
+        deviation_pct = abs(est_radius - expected_radius) / expected_radius * 100
+        if deviation_pct <= tol_pct:
+            return _make(
+                "CH_SC_07",
+                "PASS",
+                f"Part 2 constant arc: measured ~{est_radius:.1f} m "
+                f"(expected {expected_radius:.2f} m for {direction} at {vut_speed_kmh:.0f} km/h, "
+                f"Δ{deviation_pct:.1f}% within ±{tol_pct:.0f}% tolerance).",
+            )
+        return _make(
+            "CH_SC_07",
+            "FAIL",
+            f"Part 2 arc radius mismatch: measured ~{est_radius:.1f} m, "
+            f"protocol requires {expected_radius:.2f} m for {direction} at {vut_speed_kmh:.0f} km/h "
+            f"(deviation {deviation_pct:.1f}% > ±{tol_pct:.0f}% tolerance). "
+            f"Rebuild the path in RoadRunner with the correct curve radius.",
+        )
+
+    # Speed or protocol entry not found — fall back to informational MANUAL_REVIEW
+    speed_str = f"{vut_speed_kmh:.0f} km/h" if vut_speed_kmh else "unknown speed"
     return _make(
         "CH_SC_07",
         "MANUAL_REVIEW",
-        f"Curved trajectory detected: ~{est_radius:.1f} m estimated radius "
-        f"({len(radii)} curved vertex pairs, polyline approximation). "
-        f"Polyline discretisation prevents precise auto-verification — "
-        f"confirm constant-radius arc in RoadRunner road geometry.",
+        f"Curved trajectory detected: ~{est_radius:.1f} m Part 2 radius ({direction}, {speed_str}). "
+        f"No protocol entry for this speed/direction combination — "
+        f"add to config.curve_part2_radii_m or verify in RoadRunner.",
     )
 
 

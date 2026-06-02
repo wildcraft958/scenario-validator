@@ -49,6 +49,14 @@
   "curvature_min_heading_delta_rad": 0.01,
   "curvature_min_segment_length_m": 0.01,
   "curvature_outlier_factor": 2.5,
+  "_curve_radii_comment": "Protocol Part 2 (constant-radius arc) values for CPTA/CCFtap/CMFtap/CBTA paths. Source: EuroNCAP Frontal Collisions v1.1 Table 1.2.4. Used by CH_SC_07 to PASS/FAIL instead of MANUAL_REVIEW when VUT speed and turn direction are known.",
+  "curve_part2_radii_m": [
+    {"vut_speed_max_kmh": 10,  "direction": "Nearside", "radius_m": 8.00},
+    {"vut_speed_max_kmh": 10,  "direction": "Farside",  "radius_m": 9.00},
+    {"vut_speed_max_kmh": 15,  "direction": "Farside",  "radius_m": 11.75},
+    {"vut_speed_max_kmh": 25,  "direction": "Farside",  "radius_m": 14.75}
+  ],
+  "curve_radius_tolerance_pct": 20.0,
   "_ASSUMPTIONS_TO_VERIFY": [
     "These values were inferred by tooling, NOT confirmed by an engineer. Verify against protocol:",
     "scenarios.*.type (longitudinal/crossing/head-on) - inferred from the EuroNCAP scenario name; confirm each.",
@@ -101,16 +109,19 @@
     },
     "CCFtap": {
       "type": "crossing",
+      "vut_speed_range_kmh": [10, 25],
       "impact_overlap_pct": 50,
       "direction": "crossing"
     },
     "CCFhos": {
       "type": "longitudinal",
+      "vut_speed_range_kmh": [30, 100],
       "impact_overlap_pct": 50,
       "direction": "head-on"
     },
     "CCFhol": {
       "type": "crossing",
+      "vut_speed_range_kmh": [30, 100],
       "impact_overlap_pct": 50,
       "direction": "crossing"
     },

@@ -221,6 +221,12 @@ class Config(BaseModel):
     # CH_SC_07: radii above this multiple of the median are treated as discretisation
     # outliers at the arc entry/exit and excluded from the estimated turn radius.
     curvature_outlier_factor: float = 2.5
+    # CH_SC_07: protocol Part 2 (constant radius arc) values for CPTA/CCFtap/CMFtap/CBTA.
+    # Source: EuroNCAP Frontal Collisions v1.1 Table 1.2.4. Each entry: {vut_speed_max_kmh, direction, radius_m}.
+    # Direction "Nearside" = right turn (heading decreases); "Farside" = left turn (heading increases).
+    curve_part2_radii_m: list[dict] = []
+    # Allowed deviation from the protocol Part 2 radius before a FAIL is issued (%).
+    curve_radius_tolerance_pct: float = 20.0
 
     @classmethod
     def load(cls, path: Path | None = None) -> Config:
