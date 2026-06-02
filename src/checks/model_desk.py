@@ -150,7 +150,7 @@ def check_md_05(rd_data: dict, is_junction_scenario: bool) -> CheckResult:
     has_warnings = rd.route_has_warnings(rd_data)
     has_errors = rd.route_has_errors(rd_data)
 
-    if not has_warnings and not has_errors:
+    if not any(has_warnings) and not any(has_errors):
         return _make("CH_MD_05", "PASS", "No warnings or errors in any route")
 
     if not any(has_errors):

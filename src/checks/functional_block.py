@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from lxml import etree
 
 from ..models import CheckResult, Config
 
@@ -38,15 +39,24 @@ def check_fb_01(scenario_dir: Path, config: Config) -> CheckResult:
     flags presence only.
     """
     ta_path = scenario_dir / "TA.xml"
-    if ta_path.exists():
-        return _make(
-            "CH_FB_01",
-            "MANUAL_REVIEW",
-            "TA.xml present. Manually verify it uses the EuroNCAP v4 template "
-            "(ENCAP_Scenario_func_template_V4.0.xlsx) and that columns J-N / O-S are "
-            "updated per the number of fellows (CH_FB_02).",
-        )
-    return _make("CH_FB_01", "FAIL", "TA.xml not found in scenario directory")
+    if not ta_path.exists():
+        return _make("CH_FB_01", "FAIL", "TA.xml not found in scenario directory")
+    try:
+        parser = etree.XMLParser(no_network=True, resolve_entities=False, load_dtd=False)
+        with ta_path.open("rb") as fh:
+            etree.parse(fh, parser)
+    except Exception as exc:
+        return _make("CH_FB_01", "FAIL", f"TA.xml is malformed or unsafe to parse: {exc}")
+
+    result = _make(
+        "CH_FB_01",
+        "MANUAL_REVIEW",
+        "TA.xml present and parseable with secure XML settings. Manually verify it uses "
+        "the EuroNCAP v4 template and that columns J-N / O-S are updated per the number "
+        "of fellows (CH_FB_02).",
+    )
+    result.source_file = "TA.xml"
+    return result
 
 
 def run_all(scenario_dir: Path, config: Config) -> list[CheckResult]:

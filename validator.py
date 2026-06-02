@@ -19,6 +19,7 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _resolve_file(scenario_dir: Path, extension: str) -> Path | None:
-    matches = list(scenario_dir.glob(f"*{extension}"))
+    matches = sorted(p for p in scenario_dir.iterdir() if p.is_file() and p.suffix == extension)
     if not matches:
         log.warning("No %s file found in %s", extension, scenario_dir)
         return None
@@ -54,6 +55,8 @@ def run_validation(
     scenario_dir: Path,
     config_path: Path | None = None,
     skip_rd: bool = False,
+    cli_command: str = "",
+    template_path: Path | None = None,
 ) -> tuple[list, object]:
     """Core validation runner. Returns (results, stats)."""
     from src.models import Config, SummaryStats
@@ -63,10 +66,13 @@ def run_validation(
     from src.checks import naming, road, scenario, model_desk, model_review, functional_block
 
     config = Config.load(config_path)
+    effective_config_path = config_path or (_SCRIPT_DIR / "config.json")
+    log.info("Config loaded: %s", effective_config_path.resolve())
+    log.info("Files discovered: %s", ", ".join(sorted(p.name for p in scenario_dir.iterdir() if p.is_file())))
 
     # ---- Naming checks ----
     log.info("Running Naming checks...")
-    naming_results = naming.run_all(scenario_dir, config)
+    naming_results = naming.run_all(scenario_dir, config, skip_rd=skip_rd)
 
     # ---- Resolve files ----
     xosc_path = _resolve_file(scenario_dir, ".xosc")
@@ -93,6 +99,8 @@ def run_validation(
         try:
             xodr_root = xodr_parser.load(xodr_path)
             road_results = road.run_all(xodr_root, config, scenario_tag=scenario_tag)
+            for result in road_results:
+                result.source_file = xodr_path.name
         except Exception as exc:
             log.error("Failed to parse .xodr: %s", exc)
             from src.models import CheckResult
@@ -103,6 +111,8 @@ def run_validation(
                     description="Road check",
                     status="FAIL",
                     comment=f"Failed to parse .xodr: {exc}",
+                    source_file=xodr_path.name,
+                    severity="High",
                 )
                 for i in range(1, 7)
             ]
@@ -115,6 +125,8 @@ def run_validation(
                 description="Road check",
                 status="FAIL",
                 comment=".xodr file not found",
+                source_file="*.xodr",
+                severity="High",
             )
             for i in range(1, 7)
         ]
@@ -133,7 +145,9 @@ def run_validation(
                 from lxml import etree
                 _stub_parser = etree.XMLParser(no_network=True, resolve_entities=False, load_dtd=False)
                 xodr_root_for_sc = etree.parse(io.BytesIO(b"<OpenDRIVE/>"), _stub_parser).getroot()
-            scenario_results = scenario.run_all(xosc_root, xodr_root_for_sc, config)
+            scenario_results = scenario.run_all(xosc_root, xodr_root_for_sc, config, scenario_tag=scenario_tag)
+            for result in scenario_results:
+                result.source_file = xosc_path.name
         except Exception as exc:
             log.error("Failed to run scenario checks: %s", exc)
             from src.models import CheckResult
@@ -144,6 +158,8 @@ def run_validation(
                     description="Scenario check",
                     status="FAIL",
                     comment=f"Parsing error: {exc}",
+                    source_file=xosc_path.name,
+                    severity="High",
                 )
                 for i in range(1, 23)
             ]
@@ -156,17 +172,67 @@ def run_validation(
                 description="Scenario check",
                 status="FAIL",
                 comment=".xosc file not found",
+                source_file="*.xosc",
+                severity="High",
             )
             for i in range(1, 23)
         ]
 
     # ---- Model Desk checks ----
     md_results = []
-    if rd_path and xosc_root is not None and xodr_root_for_sc is not None:
+    if skip_rd:
+        from src.models import CheckResult
+        md_results = [
+            CheckResult(
+                check_id=f"CH_MD_0{i}",
+                category="ModelDesk",
+                description="Model Desk check",
+                status="NA",
+                comment="Skipped (--no-rd flag)",
+                source_file="*.rd",
+                severity="Low",
+            )
+            for i in range(1, 6)
+        ]
+    elif rd_path is None:
+        from src.models import CheckResult
+        if xodr_root_for_sc is not None:
+            from src.checks.model_desk import check_md_01
+            md_results = [check_md_01(xodr_root_for_sc)]
+            md_results[0].source_file = xodr_path.name if xodr_path else "*.xodr"
+        md_results += [
+            CheckResult(
+                check_id=f"CH_MD_0{i}",
+                category="ModelDesk",
+                description="Model Desk check",
+                status="FAIL",
+                comment=".rd file not found; provide the Model Desk route file or use --no-rd",
+                source_file="*.rd",
+                severity="High",
+            )
+            for i in range(2 if md_results else 1, 6)
+        ]
+    elif xosc_root is None or xodr_root_for_sc is None:
+        from src.models import CheckResult
+        md_results = [
+            CheckResult(
+                check_id=f"CH_MD_0{i}",
+                category="ModelDesk",
+                description="Model Desk check",
+                status="FAIL",
+                comment="Cannot run .rd consistency checks because .xosc or .xodr parsing failed",
+                source_file=rd_path.name,
+                severity="High",
+            )
+            for i in range(1, 6)
+        ]
+    else:
         log.info("Running Model Desk checks on %s...", rd_path.name)
         try:
             rd_data = rd_parser.load(rd_path)
             md_results = model_desk.run_all(rd_data, xosc_root, xodr_root_for_sc, config)
+            for result in md_results:
+                result.source_file = rd_path.name
         except Exception as exc:
             log.error("Failed to run Model Desk checks: %s", exc)
             from src.models import CheckResult
@@ -177,35 +243,10 @@ def run_validation(
                     description="Model Desk check",
                     status="FAIL",
                     comment=f"Parsing error: {exc}",
+                    source_file=rd_path.name,
+                    severity="High",
                 )
                 for i in range(1, 6)
-            ]
-    elif skip_rd:
-        from src.models import CheckResult
-        md_results = [
-            CheckResult(
-                check_id=f"CH_MD_0{i}",
-                category="ModelDesk",
-                description="Model Desk check",
-                status="NA",
-                comment="Skipped (--no-rd flag)",
-            )
-            for i in range(1, 6)
-        ]
-    else:
-        # Try to run CH_MD_01 at minimum using only xodr (no .rd needed)
-        if xodr_root_for_sc is not None:
-            from src.checks.model_desk import check_md_01
-            from src.models import CheckResult
-            md_results = [check_md_01(xodr_root_for_sc)] + [
-                CheckResult(
-                    check_id=f"CH_MD_0{i}",
-                    category="ModelDesk",
-                    description="Model Desk check",
-                    status="FAIL",
-                    comment=".rd file not found",
-                )
-                for i in range(2, 6)
             ]
 
     # ---- Model Review checks (CH_MR_01, CH_MR_02) ----
@@ -214,6 +255,8 @@ def run_validation(
         log.info("Running Model Review checks...")
         try:
             mr_results = model_review.run_all(xosc_root, config)
+            for result in mr_results:
+                result.source_file = xosc_path.name if xosc_path else "*.xosc"
         except Exception as exc:
             log.error("Failed to run Model Review checks: %s", exc)
             from src.models import CheckResult
@@ -224,6 +267,8 @@ def run_validation(
                     description="Model Review check",
                     status="FAIL",
                     comment=f"Parsing error: {exc}",
+                    source_file=xosc_path.name if xosc_path else "*.xosc",
+                    severity="High",
                 )
                 for i in range(1, 3)
             ]
@@ -236,6 +281,8 @@ def run_validation(
                 description="Model Review check",
                 status="FAIL",
                 comment=".xosc file not found",
+                source_file="*.xosc",
+                severity="High",
             )
             for i in range(1, 3)
         ]
@@ -253,6 +300,11 @@ def run_validation(
         + mr_results
         + fb_results
     )
+    for result in all_results:
+        if result.status == "FAIL" and not result.severity:
+            result.severity = "High"
+        if result.status == "FAIL" and not result.suggested_fix:
+            result.suggested_fix = result.comment or "Correct the failing source data and rerun validation."
 
     # Determine scenario name from .rrscene filename or directory name
     rrscene_files = list(scenario_dir.glob("*.rrscene"))
@@ -264,6 +316,10 @@ def run_validation(
         scenario_name=scenario_name,
         run_timestamp=run_ts,
         protocol_version=config.protocol_version,
+        scenario_dir=str(scenario_dir),
+        config_path=str(effective_config_path.resolve()),
+        template_path=str(template_path.resolve()) if template_path else "",
+        cli_command=cli_command,
     )
 
     return all_results, stats
@@ -272,9 +328,24 @@ def run_validation(
 def main() -> int:
     args = _parse_args()
     scenario_dir = Path(args.scenario_dir).resolve()
+    quiet = bool(args.quiet)
+
+    def emit(message: str, *, error: bool = False) -> None:
+        if not quiet:
+            print(message, file=sys.stderr if error else sys.stdout)
 
     if not scenario_dir.is_dir():
-        print(f"ERROR: '{scenario_dir}' is not a directory", file=sys.stderr)
+        emit(f"ERROR: '{scenario_dir}' is not a directory", error=True)
+        return 1
+
+    config_path = Path(args.config).resolve() if args.config else None
+    if config_path and not config_path.is_file():
+        emit(f"ERROR: config file '{config_path}' does not exist", error=True)
+        return 1
+
+    template_path = Path(args.template).resolve() if args.template else None
+    if template_path and not template_path.is_file():
+        emit(f"ERROR: template file '{template_path}' does not exist", error=True)
         return 1
 
     output_dir = Path(args.output).resolve() if args.output else scenario_dir
@@ -283,31 +354,34 @@ def main() -> int:
     log_path = output_dir / "validation_run.log"
 
     from src.reporter import setup_logging
-    setup_logging(log_path)
-
-    if args.quiet:
-        logging.getLogger().handlers = [h for h in logging.getLogger().handlers
-                                         if not isinstance(h, logging.StreamHandler)]
+    setup_logging(log_path, quiet=quiet)
 
     log.info("=" * 60)
     log.info("EuroNCAP Scenario Validator")
     log.info("Scenario directory: %s", scenario_dir)
+    log.info("CLI command: %s", " ".join(sys.argv))
     log.info("=" * 60)
+    log.info("Start time: %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-    config_path = Path(args.config).resolve() if args.config else None
-
-    results, stats = run_validation(
-        scenario_dir,
-        config_path=config_path,
-        skip_rd=args.no_rd,
-    )
+    try:
+        results, stats = run_validation(
+            scenario_dir,
+            config_path=config_path,
+            skip_rd=args.no_rd,
+            cli_command=" ".join(sys.argv),
+            template_path=template_path,
+        )
+    except Exception as exc:
+        log.exception("Validation failed before report generation: %s", exc)
+        emit(f"ERROR: validation failed before report generation: {exc}", error=True)
+        log.info("Exit status: 1")
+        return 1
 
     # ---- Write reports ----
     from src.reporter import write_excel, write_csv
 
     ts_suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
     excel_path = output_dir / f"Validation_{stats.scenario_name}_{ts_suffix}.xlsx"
-    template_path = Path(args.template).resolve() if args.template else None
 
     write_excel(results, stats, excel_path, template_path=template_path)
 
@@ -316,20 +390,25 @@ def main() -> int:
         write_csv(results, stats, csv_path)
         log.info("CSV written: %s", csv_path)
 
-    # ---- Console summary ----
-    print()
-    print("=" * 60)
-    print(f"  Scenario : {stats.scenario_name}")
-    print(f"  Protocol : {stats.protocol_version}")
-    print(f"  Total    : {stats.total}  |  Passed: {stats.passed}  |  Failed: {stats.failed}  |  Manual: {stats.manual}  |  NA: {stats.na}")
-    print(f"  Pass Rate: {stats.pass_rate:.1f}%")
-    if stats.critical_failures:
-        print(f"  FAILURES : {', '.join(stats.critical_failures)}")
-    print(f"  Report   : {excel_path}")
-    print(f"  Log      : {log_path}")
-    print("=" * 60)
+    exit_code = 0 if stats.failed == 0 else 1
+    log.info("Excel written: %s", excel_path)
+    log.info("Exit status: %s", exit_code)
 
-    return 0 if stats.failed == 0 else 1
+    # ---- Console summary ----
+    if not quiet:
+        print()
+        print("=" * 60)
+        print(f"  Scenario : {stats.scenario_name}")
+        print(f"  Protocol : {stats.protocol_version}")
+        print(f"  Total    : {stats.total}  |  Passed: {stats.passed}  |  Failed: {stats.failed}  |  Manual: {stats.manual}  |  NA: {stats.na}")
+        print(f"  Automatable Pass Rate: {stats.pass_rate:.1f}%")
+        if stats.critical_failures:
+            print(f"  FAILURES : {', '.join(stats.critical_failures)}")
+        print(f"  Report   : {excel_path}")
+        print(f"  Log      : {log_path}")
+        print("=" * 60)
+
+    return exit_code
 
 
 if __name__ == "__main__":
