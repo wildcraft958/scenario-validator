@@ -42,6 +42,20 @@
   "junction_scenario_prefixes": [
     "CP", "CB", "CCCscp", "CMCscp"
   ],
+  "_geometry_tolerances_comment": "Tuning knobs for geometry checks (previously hardcoded in Python). Safe to leave at defaults.",
+  "east_heading_tolerance_deg": 30,
+  "cardinal_heading_tolerance_deg": 5,
+  "right_lane_offset_threshold_m": 0.1,
+  "curvature_min_heading_delta_rad": 0.01,
+  "curvature_min_segment_length_m": 0.01,
+  "curvature_outlier_factor": 2.5,
+  "_ASSUMPTIONS_TO_VERIFY": [
+    "These values were inferred by tooling, NOT confirmed by an engineer. Verify against protocol:",
+    "scenarios.*.type (longitudinal/crossing/head-on) - inferred from the EuroNCAP scenario name; confirm each.",
+    "scenarios.*.vut_speed_range_kmh - padded ranges. The exact per-test speed is encoded in each scenario filename (e.g. '30VUT' = 30 km/h); confirm the allowed range per scenario type.",
+    "scenarios.*.impact_overlap_pct - the per-scenario target; cross-checked against the filename token (e.g. '50Imp', '10Imp'). CPTA corrected 50->10 to match its '10Imp' filename.",
+    "junction_scenario_prefixes - which scenario prefixes are treated as EuroNCAP intersections (drives CH_RD_03/04/05/06). CONFIRMED-from-checklist values (do NOT flag): junction radius 8 m (CH_RD_03), leftmost road at (0,0,0) (CH_RD_04), simulation time 100-150 s (CH_SC_04), lane width 3.5 m (CH_RD_01), deceleration -4 m/s2 (CH_MR_02)."
+  ],
   "simulation_time_by_speed_s": [
     {"vut_speed_max_kmh": 50,  "min_s": 35, "max_s": 60},
     {"vut_speed_max_kmh": 90,  "min_s": 40, "max_s": 60},
@@ -156,7 +170,7 @@
       "type": "crossing",
       "vut_speed_range_kmh": [10, 60],
       "target_speed_kmh": 5,
-      "impact_overlap_pct": 50,
+      "impact_overlap_pct": 10,
       "direction": "crossing"
     }
   }

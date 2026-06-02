@@ -681,6 +681,99 @@ class TestNegativeChecks:
         result = check_sc_18(root, config, scenario_tag="CCRs")
         assert result.status == "FAIL", f"Expected FAIL for 150 km/h CCRs, got {result.status}: {result.comment}"
 
+    def test_sc_06_north_heading_vut_passes(self, config):
+        """VUT heading 90° (north) should PASS — cardinal axis, any world direction is valid."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="CPNCO_Test" author="Test"/>
+          <Entities>
+            <ScenarioObject name="VUT"><Vehicle name="VUT"/></ScenarioObject>
+          </Entities>
+          <Init>
+            <Actions>
+              <Private entityRef="VUT">
+                <PrivateAction><TeleportAction><Position>
+                  <WorldPosition x="620" y="-8" z="0" h="1.5708"/>
+                </Position></TeleportAction></PrivateAction>
+              </Private>
+            </Actions>
+          </Init>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_06
+        result = check_sc_06(root, config)
+        assert result.status == "PASS", (
+            f"VUT heading 90° (north, axis-aligned) should PASS. Got {result.status}: {result.comment}"
+        )
+
+    def test_sc_06_diagonal_heading_fails(self, config):
+        """VUT heading 45° (diagonal) should FAIL — not aligned to any cardinal axis."""
+        import math
+        diagonal_rad = math.radians(45)
+        xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="Diag_Test" author="Test"/>
+          <Entities>
+            <ScenarioObject name="VUT"><Vehicle name="VUT"/></ScenarioObject>
+          </Entities>
+          <Init>
+            <Actions>
+              <Private entityRef="VUT">
+                <PrivateAction><TeleportAction><Position>
+                  <WorldPosition x="0" y="0" z="0" h="{diagonal_rad}"/>
+                </Position></TeleportAction></PrivateAction>
+              </Private>
+            </Actions>
+          </Init>
+        </OpenSCENARIO>""".encode()
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_06
+        result = check_sc_06(root, config)
+        assert result.status == "FAIL", (
+            f"VUT heading 45° (off-axis) should FAIL. Got {result.status}: {result.comment}"
+        )
+
+    def test_rd_04_road_at_origin_passes(self, config):
+        """Leftmost road starting at (0, 0) should PASS CH_RD_04 (position-only check)."""
+        xml = b"""<?xml version="1.0"?>
+        <OpenDRIVE>
+          <junction id="1" name="J1"/>
+          <road id="1" length="200" junction="-1">
+            <link><successor elementId="1" elementType="junction"/></link>
+            <planView><geometry x="0" y="0" hdg="1.5708" length="200"><line/></geometry></planView>
+            <lanes><laneSection s="0"><right><lane id="-1" type="driving">
+              <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+            </lane></right></laneSection></lanes>
+          </road>
+        </OpenDRIVE>"""
+        root = _parse_xml(xml)
+        from src.checks.road import check_rd_04
+        # junction_scenario_prefixes must include this scenario tag; use CP prefix
+        result = check_rd_04(root, config, scenario_tag="CPNCO")
+        assert result.status == "PASS", (
+            f"Road at origin (0,0) should PASS regardless of heading. Got {result.status}: {result.comment}"
+        )
+
+    def test_rd_04_road_off_origin_fails(self, config):
+        """Leftmost road starting at (598, 0) should FAIL CH_RD_04 (not at origin)."""
+        xml = b"""<?xml version="1.0"?>
+        <OpenDRIVE>
+          <junction id="1" name="J1"/>
+          <road id="1" length="200" junction="-1">
+            <link><successor elementId="1" elementType="junction"/></link>
+            <planView><geometry x="598" y="0" hdg="3.14159" length="200"><line/></geometry></planView>
+            <lanes><laneSection s="0"><right><lane id="-1" type="driving">
+              <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+            </lane></right></laneSection></lanes>
+          </road>
+        </OpenDRIVE>"""
+        root = _parse_xml(xml)
+        from src.checks.road import check_rd_04
+        result = check_rd_04(root, config, scenario_tag="CPNCO")
+        assert result.status == "FAIL", (
+            f"Road starting at x=598 should FAIL (not at origin). Got {result.status}: {result.comment}"
+        )
+
 
 # ============================================================
 # Geometry tests (no external files needed)

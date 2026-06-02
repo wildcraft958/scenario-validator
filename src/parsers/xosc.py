@@ -313,12 +313,17 @@ def get_trajectory_speed_kmh(root: Any, entity_name: str) -> float | None:
     return max(speeds) if speeds else None
 
 
-def get_polyline_curvature_radii(root: Any, entity_name: str) -> list[float]:
+def get_polyline_curvature_radii(
+    root: Any,
+    entity_name: str,
+    min_heading_delta_rad: float = 0.01,
+    min_segment_length_m: float = 0.01,
+) -> list[float]:
     """Compute turning radii (m) from vertex heading changes in a polyline trajectory.
 
     Returns radii only for sections where the heading is actively changing (curved part).
-    Straight sections (|dh| < 0.01 rad) are excluded. Used by CH_SC_07 to verify
-    constant-radius turns from RoadRunner polyline trajectories.
+    Straight sections (|dh| < min_heading_delta_rad) are excluded. Used by CH_SC_07 to
+    verify constant-radius turns from RoadRunner polyline trajectories.
     """
     import math
     vertices = get_trajectory_vertices(root, entity_name)
@@ -334,7 +339,7 @@ def get_polyline_curvature_radii(root: Any, entity_name: str) -> list[float]:
             vertices[i]["x"] - vertices[i - 1]["x"],
             vertices[i]["y"] - vertices[i - 1]["y"],
         )
-        if abs(dh) > 0.01 and dl > 0.01:
+        if abs(dh) > min_heading_delta_rad and dl > min_segment_length_m:
             radii.append(dl / abs(dh))
     return radii
 

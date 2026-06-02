@@ -187,7 +187,8 @@ def check_sc_04(xosc_root: Any, config: Config) -> CheckResult:
     return _make(
         "CH_SC_04",
         "FAIL",
-        f"Simulation time = {sim_time} s - must be in [{lo}, {hi}] s{speed_note}",
+        f"Simulation time = {sim_time} s - must be in [{lo}, {hi}] s{speed_note} "
+        f"per EuroNCAP checklist (total simulation time 100-150 s).",
     )
 
 
@@ -216,20 +217,24 @@ def check_sc_05(xosc_root: Any, xodr_root: Any, config: Config) -> CheckResult:
 
     # WorldPosition fallback: for east-heading roads (h≈0°), negative y = right lane.
     # This holds for OpenDRIVE/RoadRunner convention where y increases left of travel.
+    # For non-east-aligned roads the lane side cannot be decided from world y alone, so
+    # the check stays MANUAL_REVIEW (the road centre line would be needed).
     positions = xosc.get_init_positions(xosc_root)
     if vut in positions:
         vut_pos = positions[vut]
         hdg_deg = math.degrees(vut_pos.get("h", 0.0)) % 360
-        east_heading = hdg_deg <= 30 or hdg_deg >= 330
+        tol = config.east_heading_tolerance_deg
+        east_heading = hdg_deg <= tol or hdg_deg >= 360 - tol
         if east_heading:
             y = vut_pos["y"]
-            if y < -0.1:
+            thr = config.right_lane_offset_threshold_m
+            if y < -thr:
                 return _make(
                     "CH_SC_05",
                     "PASS",
                     f"VUT '{vut}' at y={y:.2f} m (negative = right lane for east-heading road)",
                 )
-            if y > 0.1:
+            if y > thr:
                 return _make(
                     "CH_SC_05",
                     "FAIL",
@@ -245,23 +250,38 @@ def check_sc_05(xosc_root: Any, xodr_root: Any, config: Config) -> CheckResult:
 
 
 def check_sc_06(xosc_root: Any, config: Config) -> CheckResult:
-    """Direction of travel: check VUT heading is close to 0° (east = left-to-right)."""
+    """Direction of travel: VUT must start travelling straight along its (axis-aligned) lane.
+
+    The EuroNCAP requirement is that the VUT travels straight in its lane - the absolute
+    world compass direction is NOT constrained, because RoadRunner authors scenes in any
+    orientation (e.g. CPNCO's VUT travels due north). So this verifies the VUT's initial
+    heading is aligned to a cardinal axis (0/90/180/270 deg) within tolerance, not that it
+    points east specifically.
+    """
     positions = xosc.get_init_positions(xosc_root)
     vut = _identify_vut(xosc_root, config)
     if not vut or vut not in positions:
         return _make("CH_SC_06", "MANUAL_REVIEW", "Could not determine VUT heading - verify direction manually")
 
-    h = positions[vut].get("h", 0.0)
-    # Heading 0 = east (left-to-right), π = west (right-to-left)
-    # Allow ±45° from east (0) or from any cardinal direction per protocol
-    h_deg = math.degrees(h) % 360
-    if h_deg <= 45 or h_deg >= 315:
-        return _make("CH_SC_06", "PASS", f"VUT heading = {h_deg:.1f}° (left-to-right)")
+    h_deg = math.degrees(positions[vut].get("h", 0.0)) % 360
+    nearest_axis = round(h_deg / 90.0) * 90.0  # 0, 90, 180, 270, or 360
+    delta = abs(h_deg - nearest_axis)
+    if delta > 180:
+        delta = 360 - delta
+
+    if delta <= config.cardinal_heading_tolerance_deg:
+        axis = int(nearest_axis) % 360
+        return _make(
+            "CH_SC_06",
+            "PASS",
+            f"VUT heading = {h_deg:.1f}° - aligned to straight axis-aligned road "
+            f"(nearest axis {axis}°, Δ{delta:.1f}°). World direction is not constrained by protocol.",
+        )
     return _make(
         "CH_SC_06",
         "FAIL",
-        f"VUT heading = {h_deg:.1f}° - expected ~0° (left-to-right). "
-        "Verify direction of travel matches protocol.",
+        f"VUT heading = {h_deg:.1f}° is {delta:.1f}° off the nearest road axis "
+        f"({int(nearest_axis) % 360}°). VUT must start travelling straight along its lane.",
     )
 
 
@@ -313,7 +333,11 @@ def check_sc_07(xosc_root: Any, config: Config) -> CheckResult:
     if not vut:
         return _make("CH_SC_07", "NA", "No Clothoid trajectory and no VUT identified")
 
-    radii = xosc.get_polyline_curvature_radii(xosc_root, vut)
+    radii = xosc.get_polyline_curvature_radii(
+        xosc_root, vut,
+        min_heading_delta_rad=config.curvature_min_heading_delta_rad,
+        min_segment_length_m=config.curvature_min_segment_length_m,
+    )
     if not radii:
         return _make("CH_SC_07", "NA", "No Clothoid trajectory and VUT heading is constant — not a turning scenario")
 
@@ -322,7 +346,7 @@ def check_sc_07(xosc_root: Any, config: Config) -> CheckResult:
     # of the lower half to estimate the actual turn radius without transition noise.
     sorted_r = sorted(radii)
     median_r = sorted_r[len(sorted_r) // 2]
-    core_radii = [r for r in radii if r <= 2.5 * median_r]
+    core_radii = [r for r in radii if r <= config.curvature_outlier_factor * median_r]
     est_radius = (sum(core_radii) / len(core_radii)) if core_radii else median_r
 
     return _make(
@@ -680,7 +704,8 @@ def check_sc_16(xosc_root: Any, config: Config, scenario_tag: str | None = None)
             "CH_SC_16",
             "MANUAL_REVIEW",
             f"Scenario uses RoadRunner kinematic trajectory — impact overlap cannot be computed "
-            f"from Init positions. Protocol requires {expected}% ±{config.impact_tolerance_pct}%. "
+            f"from Init positions. Expected ~{expected}% ±{config.impact_tolerance_pct}% "
+            f"(per the scenario's protocol; the scenario filename encodes the target, e.g. '50Imp'). "
             f"Verify in RoadRunner or HIL test.",
         )
 
@@ -721,8 +746,9 @@ def check_sc_17(xosc_root: Any, config: Config, scenario_tag: str | None = None)
             "CH_SC_17",
             "MANUAL_REVIEW",
             f"Scenario uses RoadRunner kinematic trajectory — longitudinal impact overlap cannot "
-            f"be computed from Init positions. Protocol requires {expected}% "
-            f"(±{config.longitudinal_impact_tolerance_pct}%). Verify in RoadRunner or HIL test.",
+            f"be computed from Init positions. Expected ~{expected}% "
+            f"(±{config.longitudinal_impact_tolerance_pct}%, per the scenario's protocol; the "
+            f"filename encodes the target, e.g. '50Imp'). Verify in RoadRunner or HIL test.",
         )
 
     pct, msg = _get_impact_percentage(xosc_root, config, proto.type)

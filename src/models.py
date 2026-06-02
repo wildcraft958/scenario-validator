@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class CheckResult(BaseModel):
@@ -13,16 +14,50 @@ class CheckResult(BaseModel):
     description: str
     status: Literal["PASS", "FAIL", "NA", "MANUAL_REVIEW"]
     comment: str = ""
+    source_file: str = ""
+    severity: str = "Medium"
+    automatable_or_manual: Literal["Automatable", "Manual"] = "Automatable"
+    timestamp: str = Field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    suggested_fix: str = ""
+
+    @model_validator(mode="after")
+    def normalize_review_fields(self) -> CheckResult:
+        if self.status == "MANUAL_REVIEW":
+            self.automatable_or_manual = "Manual"
+            if not self.severity:
+                self.severity = "Low"
+        elif not self.severity:
+            self.severity = "High" if self.status == "FAIL" else "Medium"
+        if self.status == "FAIL" and not self.suggested_fix:
+            self.suggested_fix = self.comment or "Review the failing check and correct the source data."
+        return self
+
+    @property
+    def result(self) -> Literal["Yes", "No", "NA", "Manual"]:
+        status_map = {"PASS": "Yes", "FAIL": "No", "NA": "NA", "MANUAL_REVIEW": "Manual"}
+        return status_map[self.status]  # type: ignore[return-value]
 
     def as_row(self) -> tuple[str, str, str, str, str]:
-        status_map = {"PASS": "Yes", "FAIL": "No", "NA": "NA", "MANUAL_REVIEW": "Manual"}
         return (
             self.category,
             self.check_id,
             self.description,
-            status_map[self.status],
+            self.result,
             self.comment,
         )
+
+    def as_validation_row(self) -> list[str]:
+        return [
+            self.check_id,
+            self.category,
+            self.description,
+            self.result,
+            self.comment,
+            self.source_file,
+            self.severity,
+            self.automatable_or_manual,
+            self.timestamp,
+        ]
 
 
 class SummaryStats(BaseModel):
@@ -36,6 +71,14 @@ class SummaryStats(BaseModel):
     na: int
     pass_rate: float
     critical_failures: list[str]
+    scenario_dir: str = ""
+    config_path: str = ""
+    template_path: str = ""
+    cli_command: str = ""
+    final_status: str = ""
+    automatable_total: int = 0
+    automatable_passed: int = 0
+    automatable_failed: int = 0
 
     @classmethod
     def from_results(
@@ -44,13 +87,24 @@ class SummaryStats(BaseModel):
         scenario_name: str,
         run_timestamp: str,
         protocol_version: str,
+        scenario_dir: str = "",
+        config_path: str = "",
+        template_path: str = "",
+        cli_command: str = "",
     ) -> SummaryStats:
         passed = sum(1 for r in results if r.status == "PASS")
         failed = sum(1 for r in results if r.status == "FAIL")
         manual = sum(1 for r in results if r.status == "MANUAL_REVIEW")
         na = sum(1 for r in results if r.status == "NA")
         total = len(results)
-        rate = round((passed / total * 100) if total else 0, 1)
+        automatable_results = [
+            r for r in results
+            if r.automatable_or_manual == "Automatable" and r.status in ("PASS", "FAIL")
+        ]
+        automatable_passed = sum(1 for r in automatable_results if r.status == "PASS")
+        automatable_failed = sum(1 for r in automatable_results if r.status == "FAIL")
+        automatable_total = len(automatable_results)
+        rate = round((automatable_passed / automatable_total * 100) if automatable_total else 0, 1)
         critical = [r.check_id for r in results if r.status == "FAIL"]
         return cls(
             scenario_name=scenario_name,
@@ -63,6 +117,14 @@ class SummaryStats(BaseModel):
             na=na,
             pass_rate=rate,
             critical_failures=critical,
+            scenario_dir=scenario_dir,
+            config_path=config_path,
+            template_path=template_path,
+            cli_command=cli_command,
+            final_status="FAIL" if failed else "PASS",
+            automatable_total=automatable_total,
+            automatable_passed=automatable_passed,
+            automatable_failed=automatable_failed,
         )
 
 
@@ -128,6 +190,23 @@ class Config(BaseModel):
     # Curved-following scenarios (CCF*) have junction elements in their xodr for lane
     # structure, not intersections - those checks must be skipped for them.
     junction_scenario_prefixes: list[str] = []
+    # ---- Geometry tolerances (previously hardcoded in check logic) ----
+    # CH_SC_05: how close to east (0 deg) a WorldPosition heading must be before the
+    # negative-y = right-lane heuristic is applied.
+    east_heading_tolerance_deg: float = 30.0
+    # CH_SC_06 / CH_RD_04: how close the VUT/road heading must be to a cardinal axis
+    # (0/90/180/270 deg) to count as straight, axis-aligned travel. World direction itself
+    # is NOT constrained - RoadRunner authors scenes in any orientation.
+    cardinal_heading_tolerance_deg: float = 5.0
+    # CH_SC_05: lateral offset (m) from road centre beyond which the lane side is decided.
+    right_lane_offset_threshold_m: float = 0.1
+    # get_polyline_curvature_radii / CH_SC_07: minimum per-vertex heading change (rad) and
+    # segment length (m) for a polyline section to count as "curving" rather than straight.
+    curvature_min_heading_delta_rad: float = 0.01
+    curvature_min_segment_length_m: float = 0.01
+    # CH_SC_07: radii above this multiple of the median are treated as discretisation
+    # outliers at the arc entry/exit and excluded from the estimated turn radius.
+    curvature_outlier_factor: float = 2.5
 
     @classmethod
     def load(cls, path: Path | None = None) -> Config:
@@ -141,7 +220,11 @@ class Config(BaseModel):
         raw["vehicle_dimensions"] = {
             k: VehicleDimensions(**v) for k, v in raw["vehicle_dimensions"].items()
         }
-        raw["scenarios"] = {k: ScenarioProtocol(**v) for k, v in raw["scenarios"].items()}
+        raw["scenarios"] = {
+            k: ScenarioProtocol(**v)
+            for k, v in raw["scenarios"].items()
+            if not k.startswith("_")
+        }
         raw["simulation_time_by_speed_s"] = [
             SimTimeThreshold(**t) for t in raw.get("simulation_time_by_speed_s", [])
         ]

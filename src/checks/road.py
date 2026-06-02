@@ -101,16 +101,18 @@ def check_rd_03(root: Any, config: Config, scenario_tag: str | None = None) -> C
             "CH_RD_03",
             "FAIL",
             f"Junction radii out of spec: {[round(r, 2) for r in bad]} "
-            f"(expected {target} ± {tolerance} m)",
+            f"(expected {target} ± {tolerance} m per EuroNCAP checklist 'junction curvature = 8 m').",
         )
     return _make("CH_RD_03", "PASS")
 
 
 def check_rd_04(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
-    """For junction scenarios: leftmost road must start at (0,0) heading east (0°).
+    """For junction scenarios with static objects at the intersection: the leftmost road
+    must start at the RoadRunner origin (0, 0, 0).
 
-    Protocol requires (x=0, y=0, z=0, hdg=0) so the VUT approach road is at world origin
-    and goes left-to-right (east). Tolerance: ±5° on heading to absorb floating-point noise.
+    EuroNCAP checklist (verbatim): "the start of the leftmost road coordinates should be at
+    the (0,0,0) position of the RoadRunner". Only the POSITION is constrained - the road's
+    compass heading is NOT part of this requirement (VUT direction is covered by CH_SC_06).
     """
     if not xodr.has_junctions(root):
         return _make("CH_RD_04", "NA", "No junctions - check not applicable")
@@ -123,19 +125,14 @@ def check_rd_04(root: Any, config: Config, scenario_tag: str | None = None) -> C
 
     x_ok = abs(origin["x"]) < 0.01
     y_ok = abs(origin["y"]) < 0.01
-    hdg_deg = math.degrees(origin["hdg"]) % 360
-    # heading=0° means east (left-to-right); allow ±5° for floating-point noise
-    hdg_ok = hdg_deg <= 5.0 or hdg_deg >= 355.0
-
-    issues = []
-    if not x_ok or not y_ok:
-        issues.append(f"position ({origin['x']:.3f}, {origin['y']:.3f}) != (0, 0)")
-    if not hdg_ok:
-        issues.append(f"heading {hdg_deg:.1f}° != 0° (east)")
-
-    if not issues:
-        return _make("CH_RD_04", "PASS", "Leftmost road starts at (0, 0) heading east (0°)")
-    return _make("CH_RD_04", "FAIL", f"Leftmost road: {'; '.join(issues)}")
+    if x_ok and y_ok:
+        return _make("CH_RD_04", "PASS", "Leftmost road starts at the RoadRunner origin (0, 0)")
+    return _make(
+        "CH_RD_04",
+        "FAIL",
+        f"Leftmost road starts at ({origin['x']:.3f}, {origin['y']:.3f}) - must be at the "
+        f"RoadRunner origin (0, 0, 0) per EuroNCAP checklist (intersection/static-object scenarios).",
+    )
 
 
 def check_rd_05(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
@@ -149,12 +146,12 @@ def check_rd_05(root: Any, config: Config, scenario_tag: str | None = None) -> C
     if not positions:
         return _make("CH_RD_05", "FAIL", "No road geometry data found")
 
-    # Roads should have consistent headings - straight approach roads should have
-    # heading close to 0 (east) or π (west) for standard left-to-right scenarios.
+    # Checklist: junction roads must be oriented along the VUT's direction of travel
+    # (road start = entry, road end = exit). Precise verification needs VUT-trajectory
+    # correlation; as a heuristic, at least one approach road should run along an axis the
+    # VUT can travel straight on (within 45 deg of an axis). RoadRunner authors axis-aligned
+    # roads, so a purely diagonal road network would indicate a misaligned junction.
     headings = [p["hdg"] for p in positions]
-    # Check that not all headings are perpendicular (which would suggest roads
-    # are aligned N-S instead of E-W, violating entry=start/exit=end convention)
-    # This is a heuristic: at least one road should have hdg within 45° of 0 or π
     aligned = any(
         abs(h) < math.pi / 4 or abs(abs(h) - math.pi) < math.pi / 4
         for h in headings
