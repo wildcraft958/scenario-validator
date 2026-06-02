@@ -86,9 +86,35 @@ def _result_row(ws, row: int, result: CheckResult) -> None:
 
 
 def _set_column_widths(ws) -> None:
-    widths = {1: 16, 2: 18, 3: 56, 4: 12, 5: 64, 6: 24, 7: 14, 8: 22, 9: 22}
+    widths = {1: 16, 2: 16, 3: 52, 4: 10, 5: 60, 6: 22, 7: 14, 8: 20, 9: 20}
     for col, width in widths.items():
         ws.column_dimensions[get_column_letter(col)].width = width
+
+
+def _auto_row_heights(ws, data_start_row: int, col_char_widths: dict[int, int],
+                      min_height: float = 15.0, line_height: float = 14.0) -> None:
+    """Set row heights so wrapped text is fully visible without double-clicking.
+
+    openpyxl sets wrap_text=True but leaves row height at the Excel default (15pt),
+    which clips multi-line content. This function estimates the number of wrapped
+    lines in each cell based on text length ÷ column character width and sizes
+    the row to fit the tallest cell.
+    """
+    import math
+    for row in ws.iter_rows(min_row=data_start_row):
+        max_lines = 1
+        for cell in row:
+            if cell.value is None:
+                continue
+            text = str(cell.value)
+            col_idx = cell.column
+            col_w = col_char_widths.get(col_idx, 15)
+            # Each Excel "character width" unit ≈ 1 character at default font.
+            # Estimate wrapped lines conservatively.
+            lines = math.ceil(len(text) / max(col_w, 1))
+            max_lines = max(max_lines, max(1, lines))
+        height = min_height + (max_lines - 1) * line_height
+        ws.row_dimensions[row[0].row].height = height
 
 
 def write_excel(
@@ -125,6 +151,11 @@ def write_excel(
 
     _set_column_widths(ws)
     ws.freeze_panes = "A4"
+    # Set header rows to fixed heights; auto-size data rows
+    ws.row_dimensions[1].height = 20
+    ws.row_dimensions[3].height = 28
+    _VALIDATION_COL_CHARS = {1: 16, 2: 16, 3: 52, 4: 10, 5: 60, 6: 22, 7: 14, 8: 20, 9: 20}
+    _auto_row_heights(ws, data_start_row=4, col_char_widths=_VALIDATION_COL_CHARS)
 
     # ---- Sheet 2: Issues log ----
     ws_issues = wb.create_sheet("Issues Log")
@@ -146,8 +177,11 @@ def write_excel(
                 cell.alignment = Alignment(wrap_text=True)
             row += 1
 
-    for col, width in {1: 16, 2: 18, 3: 72, 4: 24, 5: 72, 6: 14}.items():
+    _ISSUES_COL_WIDTHS = {1: 16, 2: 16, 3: 64, 4: 22, 5: 64, 6: 12}
+    for col, width in _ISSUES_COL_WIDTHS.items():
         ws_issues.column_dimensions[get_column_letter(col)].width = width
+    ws_issues.row_dimensions[1].height = 28
+    _auto_row_heights(ws_issues, data_start_row=2, col_char_widths=_ISSUES_COL_WIDTHS)
 
     # ---- Sheet 3: Run Summary ----
     ws_sum = wb.create_sheet("Run Summary")
