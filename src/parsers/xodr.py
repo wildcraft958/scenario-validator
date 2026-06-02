@@ -27,11 +27,6 @@ def xpath(root: Any, query: str) -> list[Any]:
     return root.xpath(query)
 
 
-def xpath_one(root: Any, query: str, default: Any = None) -> Any:
-    results = root.xpath(query)
-    return results[0] if results else default
-
-
 # ---------- Road-level helpers ----------
 
 def get_roads(root: Any) -> list[Any]:

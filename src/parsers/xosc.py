@@ -59,14 +59,6 @@ def get_entity_name(entity: Any) -> str:
     return entity.get("name", "")
 
 
-def get_entity_type(entity: Any) -> str:
-    """Returns 'Vehicle', 'Pedestrian', or 'MiscObject'."""
-    for tag in ("Vehicle", "Pedestrian", "MiscObject"):
-        if entity.xpath(f".//{tag}"):
-            return tag
-    return "Unknown"
-
-
 def get_init_positions(root: Any) -> dict[str, dict[str, float]]:
     """Returns {entity_name: {x, y, z, h}} from Init section.
     Skips entities whose positions are parameter references.
@@ -185,18 +177,6 @@ def get_actors_ordered(root: Any) -> list[str]:
         if ref not in seen:
             seen.append(ref)
     return seen
-
-
-def get_event_trigger_refs(root: Any) -> list[dict]:
-    """Returns event trigger conditions to check CH_SC_19 (target starts after VUT reaches speed)."""
-    triggers = []
-    for cond in xpath(root, "//StartTrigger//ConditionGroup//Condition"):
-        triggers.append({
-            "name": cond.get("name", ""),
-            "type": cond.xpath("EntityCondition") or cond.xpath("ByValueCondition"),
-            "delay": _safe_float(cond.get("delay", "0")) or 0.0,
-        })
-    return triggers
 
 
 def get_entity_catalog_filepaths(root: Any) -> dict[str, str]:

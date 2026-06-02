@@ -47,12 +47,26 @@ class CheckResult(BaseModel):
         )
 
     def as_validation_row(self) -> list[str]:
+        """Full row including Comment — for Excel only."""
         return [
             self.check_id,
             self.category,
             self.description,
             self.result,
             self.comment,
+            self.source_file,
+            self.severity,
+            self.automatable_or_manual,
+            self.timestamp,
+        ]
+
+    def as_csv_row(self) -> list[str]:
+        """Row WITHOUT Comment — for CSV export (Comment is proprietary)."""
+        return [
+            self.check_id,
+            self.category,
+            self.description,
+            self.result,
             self.source_file,
             self.severity,
             self.automatable_or_manual,
