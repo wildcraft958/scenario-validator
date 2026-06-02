@@ -73,13 +73,26 @@ def run_validation(
     xodr_path = _resolve_file(scenario_dir, ".xodr")
     rd_path = _resolve_file(scenario_dir, ".rd") if not skip_rd else None
 
+    # ---- Detect scenario tag from xosc filename (used to scope junction checks) ----
+    scenario_tag: str | None = None
+    if xosc_path:
+        stem_upper = xosc_path.stem.upper()
+        for prefix in sorted(
+            config.naming_convention.get("valid_prefixes", []),
+            key=len,
+            reverse=True,
+        ):
+            if prefix.upper() in stem_upper:
+                scenario_tag = prefix
+                break
+
     # ---- Road checks ----
     road_results = []
     if xodr_path:
         log.info("Running Road checks on %s...", xodr_path.name)
         try:
             xodr_root = xodr_parser.load(xodr_path)
-            road_results = road.run_all(xodr_root, config)
+            road_results = road.run_all(xodr_root, config, scenario_tag=scenario_tag)
         except Exception as exc:
             log.error("Failed to parse .xodr: %s", exc)
             from src.models import CheckResult

@@ -469,12 +469,16 @@ def _check_zero_speed(xosc_root: Any, config: Config, entity_name: str, check_id
             sources.append("action phase")
         return _make(check_id, "PASS", f"'{entity_name}': speed = 0 m/s (Absolute) in {' + '.join(sources)}")
 
-    # No speed action found anywhere
+    # No speed action found anywhere.
+    # Moving pedestrian/cyclist targets (EPTa, EPTc, EMT, EBTa) that travel via a
+    # FollowTrajectoryAction will never have an AbsoluteTargetSpeed - absence is
+    # correct for those actors.  Flag for manual review rather than hard-failing.
     return _make(
         check_id,
-        "FAIL",
-        f"'{entity_name}': No AbsoluteTargetSpeed found in Init or action phase - "
-        "must have Initialize Speed = Absolute(0 m/s)",
+        "MANUAL_REVIEW",
+        f"'{entity_name}': No AbsoluteTargetSpeed found in Init or action phase. "
+        "If this target moves via a trajectory action this is expected. "
+        "Verify manually that the speed is appropriate for the scenario.",
     )
 
 

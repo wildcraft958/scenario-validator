@@ -39,6 +39,9 @@
   "speed_sanity_max_kmh": 300,
   "static_target_name_patterns": ["Obstruction", "GVTs", "GVTb", "GVT_S", "StaticVehicle"],
   "stationary_target_name_patterns": ["EMT", "EPTa", "EPTc", "EBTa"],
+  "junction_scenario_prefixes": [
+    "CP", "CB", "CCCscp", "CMCscp"
+  ],
   "simulation_time_by_speed_s": [
     {"vut_speed_max_kmh": 50,  "min_s": 35, "max_s": 60},
     {"vut_speed_max_kmh": 90,  "min_s": 40, "max_s": 60},
@@ -141,6 +144,20 @@
       "type": "longitudinal",
       "impact_overlap_pct": 50,
       "direction": "left-to-right"
+    },
+    "CPNCO": {
+      "type": "crossing",
+      "vut_speed_range_kmh": [20, 60],
+      "target_speed_kmh": 5,
+      "impact_overlap_pct": 50,
+      "direction": "crossing"
+    },
+    "CPTA": {
+      "type": "crossing",
+      "vut_speed_range_kmh": [10, 60],
+      "target_speed_kmh": 5,
+      "impact_overlap_pct": 50,
+      "direction": "crossing"
     }
   }
 }

@@ -66,10 +66,28 @@ def check_rd_02(root: Any, config: Config) -> CheckResult:
     return _make("CH_RD_02", "FAIL", f"Only {count} road segment(s) found - need at least 2")
 
 
-def check_rd_03(root: Any, config: Config) -> CheckResult:
+def _is_junction_scenario(scenario_tag: str | None, config: Config) -> bool:
+    """True when the scenario type requires EuroNCAP intersection geometry checks.
+
+    Curved car-to-car following scenarios (CCF*, CCR*, CMR*) use a RoadRunner
+    multi-connection junction element purely for lane structure on a curved road -
+    that is NOT an EuroNCAP intersection and must not trigger the 8 m radius check.
+    """
+    if not scenario_tag or not config.junction_scenario_prefixes:
+        return False
+    tag_upper = scenario_tag.upper()
+    return any(tag_upper.startswith(p.upper()) for p in config.junction_scenario_prefixes)
+
+
+def check_rd_03(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """Junction curvature radius should be 8 m."""
     if not xodr.has_junctions(root):
         return _make("CH_RD_03", "NA", "No junctions found - check not applicable")
+    if not _is_junction_scenario(scenario_tag, config):
+        return _make(
+            "CH_RD_03", "NA",
+            "Not a junction/crossing scenario - curvature radius check does not apply"
+        )
 
     radii = xodr.junction_curvature_radii(root)
     if not radii:
@@ -88,7 +106,7 @@ def check_rd_03(root: Any, config: Config) -> CheckResult:
     return _make("CH_RD_03", "PASS")
 
 
-def check_rd_04(root: Any, config: Config) -> CheckResult:
+def check_rd_04(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """For junction scenarios: leftmost road must start at (0,0) heading east (0°).
 
     Protocol requires (x=0, y=0, z=0, hdg=0) so the VUT approach road is at world origin
@@ -96,6 +114,8 @@ def check_rd_04(root: Any, config: Config) -> CheckResult:
     """
     if not xodr.has_junctions(root):
         return _make("CH_RD_04", "NA", "No junctions - check not applicable")
+    if not _is_junction_scenario(scenario_tag, config):
+        return _make("CH_RD_04", "NA", "Not a junction/crossing scenario - check not applicable")
 
     origin = xodr.get_leftmost_road_origin(root)
     if origin is None:
@@ -118,10 +138,12 @@ def check_rd_04(root: Any, config: Config) -> CheckResult:
     return _make("CH_RD_04", "FAIL", f"Leftmost road: {'; '.join(issues)}")
 
 
-def check_rd_05(root: Any, config: Config) -> CheckResult:
+def check_rd_05(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """Junction roads must be oriented along VUT direction (entry=start, exit=end)."""
     if not xodr.has_junctions(root):
         return _make("CH_RD_05", "NA", "No junctions - check not applicable")
+    if not _is_junction_scenario(scenario_tag, config):
+        return _make("CH_RD_05", "NA", "Not a junction/crossing scenario - check not applicable")
 
     positions = xodr.get_road_start_end_positions(root)
     if not positions:
@@ -147,10 +169,12 @@ def check_rd_05(root: Any, config: Config) -> CheckResult:
     )
 
 
-def check_rd_06(root: Any, config: Config) -> CheckResult:
+def check_rd_06(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """Junction scenario lanes must NOT be on shoulder lane."""
     if not xodr.has_junctions(root):
         return _make("CH_RD_06", "NA", "No junctions - check not applicable")
+    if not _is_junction_scenario(scenario_tag, config):
+        return _make("CH_RD_06", "NA", "Not a junction/crossing scenario - check not applicable")
 
     if xodr.has_shoulder_lane_at_junction(root):
         return _make(
@@ -162,12 +186,12 @@ def check_rd_06(root: Any, config: Config) -> CheckResult:
     return _make("CH_RD_06", "PASS")
 
 
-def run_all(xodr_root: Any, config: Config) -> list[CheckResult]:
+def run_all(xodr_root: Any, config: Config, scenario_tag: str | None = None) -> list[CheckResult]:
     return [
         check_rd_01(xodr_root, config),
         check_rd_02(xodr_root, config),
-        check_rd_03(xodr_root, config),
-        check_rd_04(xodr_root, config),
-        check_rd_05(xodr_root, config),
-        check_rd_06(xodr_root, config),
+        check_rd_03(xodr_root, config, scenario_tag),
+        check_rd_04(xodr_root, config, scenario_tag),
+        check_rd_05(xodr_root, config, scenario_tag),
+        check_rd_06(xodr_root, config, scenario_tag),
     ]

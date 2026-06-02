@@ -124,6 +124,10 @@ class Config(BaseModel):
     # Upper bound for plausible entity speeds; speeds above this (or negative) are
     # flagged as garbage/incorrect by CH_MR_01.
     speed_sanity_max_kmh: float = 300.0
+    # Scenario name prefixes that require EuroNCAP junction geometry (CH_RD_03/04/05/06).
+    # Curved-following scenarios (CCF*) have junction elements in their xodr for lane
+    # structure, not intersections - those checks must be skipped for them.
+    junction_scenario_prefixes: list[str] = []
 
     @classmethod
     def load(cls, path: Path | None = None) -> Config:

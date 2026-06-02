@@ -139,7 +139,7 @@ def write_excel(
 
     _merge_category_cells(ws, category_rows)
     _set_column_widths(ws)
-    ws.freeze_panes = "B9"
+    ws.freeze_panes = "A9"
 
     # ---- Sheet 2: Issues log (mirrors the 3rd image section) ----
     issues_sheet_name = "Issues_Log"
