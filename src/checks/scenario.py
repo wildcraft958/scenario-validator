@@ -896,7 +896,13 @@ def check_sc_19(xosc_root: Any, config: Config) -> CheckResult:
 
 
 def check_sc_20(xosc_root: Any, config: Config) -> CheckResult:
-    """VUT turn direction and EBT/EPT direction maintained."""
+    """VUT turn direction and EBT/EPT direction maintained.
+
+    Primary: checks ParameterDeclarations for explicit direction/side parameters.
+    Fallback (RR kinematic format): infers VUT turn direction from trajectory
+    heading change sign — positive net = Farside (left), negative = Nearside (right).
+    The EBT/EPT direction (Same/Opposite) still needs manual verification.
+    """
     params = xosc.get_parameter_declarations(xosc_root)
     direction_params = [
         p for p in params
@@ -905,11 +911,25 @@ def check_sc_20(xosc_root: Any, config: Config) -> CheckResult:
     if direction_params:
         values = ", ".join(f"{p['name']}={p['value']}" for p in direction_params)
         return _make("CH_SC_20", "PASS", f"Direction parameters found: {values}")
+
+    # RR kinematic format: no ParameterDeclarations — infer VUT turn direction
+    # from the net heading change across the curved section of the trajectory.
+    vut = _identify_vut(xosc_root, config)
+    inferred_direction = ""
+    if vut and xosc.has_init_follow_trajectory(xosc_root, vut):
+        _, direction = xosc.get_polyline_part2_radius(xosc_root, vut)
+        if direction:
+            inferred_direction = (
+                f" Inferred VUT turn direction from trajectory: {direction} "
+                f"(positive heading change = Farside/left, negative = Nearside/right). "
+                f"Verify the EBT/EPT direction (Same/Opposite) matches the scenario intent."
+            )
+
+    base_msg = "No direction/side parameters in ParameterDeclarations."
     return _make(
         "CH_SC_20",
         "MANUAL_REVIEW",
-        "No direction/side parameters found in ParameterDeclarations. "
-        "Manually verify VUT turn direction and EBT/EPT direction (Farside/Nearside/Same/Opposite).",
+        base_msg + (inferred_direction or " Manually verify VUT turn direction and EBT/EPT direction."),
     )
 
 

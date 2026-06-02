@@ -36,8 +36,13 @@ def _safe_float(value: str | None) -> float | None:
         return None
 
 
-def xpath(root: Any, query: str) -> list[Any]:
-    return root.xpath(query)
+def xpath(root: Any, query: str, **kwargs: Any) -> list[Any]:
+    """Execute an XPath query. Pass entity names as kwargs to avoid XPath injection.
+
+    Example: xpath(root, "//Private[@entityRef=$name]", name=entity_name)
+    lxml evaluates $variable references safely without string interpolation.
+    """
+    return root.xpath(query, **kwargs)
 
 
 def xpath_one(root: Any, query: str, default: Any = None) -> Any:
@@ -98,7 +103,7 @@ def get_init_speed(root: Any, entity_name: str) -> float | None:
     """Returns the initial speed set via AbsoluteTargetSpeed in Init for an entity.
     Returns None if value is a parameter reference (e.g. '$speed').
     """
-    for priv in xpath(root, f"//Init//Private[@entityRef='{entity_name}']"):
+    for priv in xpath(root, "//Init//Private[@entityRef=$name]", name=entity_name):
         speed_nodes = priv.xpath(".//AbsoluteTargetSpeed/@value")
         if speed_nodes:
             return _safe_float(speed_nodes[0])
@@ -128,7 +133,7 @@ def get_parameter_declarations(root: Any) -> list[dict[str, str]]:
 
 def has_anchor(root: Any, entity_name: str) -> bool:
     """Returns True if entity has anchoring enabled."""
-    for obj in xpath(root, f"//ScenarioObject[@name='{entity_name}']"):
+    for obj in xpath(root, "//ScenarioObject[@name=$name]", name=entity_name):
         controllers = obj.xpath(".//Controller//Properties//Property")
         for prop in controllers:
             if prop.get("name", "").lower() == "anchor" and prop.get("value", "false").lower() != "false":
@@ -207,7 +212,7 @@ def get_entity_catalog_filepaths(root: Any) -> dict[str, str]:
 
 def get_parameter_value(root: Any, param_name: str) -> str | None:
     """Returns the default value of a ParameterDeclaration by name, or None."""
-    for p in xpath(root, f"//ParameterDeclarations/ParameterDeclaration[@name='{param_name}']"):
+    for p in xpath(root, "//ParameterDeclarations/ParameterDeclaration[@name=$name]", name=param_name):
         return p.get("value")
     return None
 
@@ -258,7 +263,7 @@ def get_trajectory_vertices(root: Any, entity_name: str) -> list[dict[str, float
     Init//Private//FollowTrajectoryAction rather than as ParameterDeclarations.
     """
     vertices: list[dict[str, float]] = []
-    for priv in xpath(root, f"//Init//Private[@entityRef='{entity_name}']"):
+    for priv in xpath(root, "//Init//Private[@entityRef=$name]", name=entity_name):
         for vertex in priv.xpath(".//FollowTrajectoryAction//Trajectory//Shape//Polyline//Vertex"):
             t = _safe_float(vertex.get("time", "0"))
             wp = vertex.xpath(".//WorldPosition")
@@ -373,7 +378,7 @@ def get_polyline_part2_radius(
 
 def has_init_follow_trajectory(root: Any, entity_name: str) -> bool:
     """True if the entity's Init section contains a FollowTrajectoryAction."""
-    for priv in xpath(root, f"//Init//Private[@entityRef='{entity_name}']"):
+    for priv in xpath(root, "//Init//Private[@entityRef=$name]", name=entity_name):
         if priv.xpath(".//FollowTrajectoryAction"):
             return True
     return False

@@ -58,11 +58,12 @@
   ],
   "curve_radius_tolerance_pct": 20.0,
   "_ASSUMPTIONS_TO_VERIFY": [
-    "These values were inferred by tooling, NOT confirmed by an engineer. Verify against protocol:",
-    "scenarios.*.type (longitudinal/crossing/head-on) - inferred from the EuroNCAP scenario name; confirm each.",
-    "scenarios.*.vut_speed_range_kmh - padded ranges. The exact per-test speed is encoded in each scenario filename (e.g. '30VUT' = 30 km/h); confirm the allowed range per scenario type.",
-    "scenarios.*.impact_overlap_pct - the per-scenario target; cross-checked against the filename token (e.g. '50Imp', '10Imp'). CPTA corrected 50->10 to match its '10Imp' filename.",
-    "junction_scenario_prefixes - which scenario prefixes are treated as EuroNCAP intersections (drives CH_RD_03/04/05/06). CONFIRMED-from-checklist values (do NOT flag): junction radius 8 m (CH_RD_03), leftmost road at (0,0,0) (CH_RD_04), simulation time 100-150 s (CH_SC_04), lane width 3.5 m (CH_RD_01), deceleration -4 m/s2 (CH_MR_02)."
+    "These values were inferred by tooling. Verify against EuroNCAP protocol before treating as definitive:",
+    "scenarios.*.type (longitudinal/crossing/head-on) - inferred from scenario name; confirm each scenario type is correct.",
+    "scenarios.*.vut_speed_range_kmh - CONFIRMED from EuroNCAP RAG db (adas_workspace/data/index/encap.db): CCFhol/CCFhos [30,100], CCFtap [10,25], CPNCO [20,60], CPTA [10,60]. Outstanding: CCRs/CCRb/CCRm/CCCscp speed ranges not yet confirmed.",
+    "scenarios.*.impact_overlap_pct - cross-checked against filename token (e.g. '50Imp', '10Imp'). CPTA corrected 50->10. Confirm protocol table values match.",
+    "curve_part2_radii_m - CONFIRMED from EuroNCAP Frontal v1.1 Table 1.2.4: Nearside 10km/h=8m, Farside 10km/h=9m, 15km/h=11.75m, 20-25km/h=14.75m. Nearside radii for 15km/h and 20-25km/h not yet in table (add when available).",
+    "CONFIRMED values (do NOT change): junction radius 8m (CH_RD_03), leftmost road at (0,0,0) (CH_RD_04), sim time 100-150s (CH_SC_04), lane width 3.5m (CH_RD_01), decel -4m/s2 (CH_MR_02)."
   ],
   "simulation_time_by_speed_s": [
     {"vut_speed_max_kmh": 50,  "min_s": 35, "max_s": 60},
