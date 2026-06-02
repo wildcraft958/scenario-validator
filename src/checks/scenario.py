@@ -406,15 +406,18 @@ def check_sc_09(xosc_root: Any, config: Config) -> CheckResult:
     )
 
 
-def check_sc_10(xosc_root: Any, xodr_root: Any, config: Config) -> CheckResult:
+def check_sc_10(xosc_root: Any, xodr_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """Trajectory must not start/end at intersection; crossing scenarios need >=1 junction waypoint.
 
     Protocol SL.1 has two requirements:
     1. No trajectory may start or end at an intersection.
     2. At least 1 waypoint must lie on the junction (for crossing scenarios).
     Checked together for entities with >=3 waypoints (approach-junction-exit pattern).
+
+    Crossing/junction scenarios are identified by config.junction_scenario_prefixes, NOT by raw
+    xodr junction element presence. Some scenarios (e.g. CCFtap) have curved-lane junction
+    elements in xodr purely for lane structure — those are NOT EuroNCAP intersections.
     """
-    junction_ids = xodr.get_junction_ids(xodr_root)
     waypoints_by_entity = xosc.get_all_waypoints_by_entity(xosc_root)
 
     if not waypoints_by_entity:
@@ -424,8 +427,20 @@ def check_sc_10(xosc_root: Any, xodr_root: Any, config: Config) -> CheckResult:
             "No waypoints found - could be using other trajectory types. Verify manually.",
         )
 
-    if not junction_ids:
-        return _make("CH_SC_10", "PASS", "Longitudinal scenario: no junction waypoint requirement")
+    # Determine whether this is a real EuroNCAP junction/crossing scenario.
+    # Use config.junction_scenario_prefixes (same guard used by RD_03/04/05/06) so that
+    # CCFtap's curved-lane junction element does not trigger the intersection checks.
+    tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
+    is_junction = (
+        bool(tag)
+        and bool(config.junction_scenario_prefixes)
+        and any(tag.upper().startswith(p.upper()) for p in config.junction_scenario_prefixes)
+    )
+
+    junction_ids = xodr.get_junction_ids(xodr_root)
+
+    if not junction_ids or not is_junction:
+        return _make("CH_SC_10", "PASS", "Longitudinal/non-intersection scenario: no junction waypoint requirement")
 
     road_positions = xodr.get_road_start_end_positions(xodr_root)
     if not road_positions:
@@ -962,7 +977,7 @@ def run_all(xosc_root: Any, xodr_root: Any, config: Config, scenario_tag: str | 
         check_sc_07(xosc_root, config),
         check_sc_08(xosc_root, config, scenario_tag=scenario_tag),
         check_sc_09(xosc_root, config),
-        check_sc_10(xosc_root, xodr_root, config),
+        check_sc_10(xosc_root, xodr_root, config, scenario_tag=scenario_tag),
         check_sc_11(xosc_root, config),
         check_sc_12(xosc_root, config),
         check_sc_13(xosc_root, config),
