@@ -560,6 +560,127 @@ class TestNegativeChecks:
             f"Expected MANUAL_REVIEW (no VUT found), got {result.status}: {result.comment}"
         )
 
+    def test_sc_16_na_without_scenario_tag(self, config):
+        """CH_SC_16 returns NA when no scenario tag is detectable (RR version string in FileHeader)."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="Exported from RoadRunner version R2025b" author="RR"/>
+          <Entities>
+            <ScenarioObject name="VUT"><Vehicle name="VUT"/></ScenarioObject>
+            <ScenarioObject name="GVT"><Vehicle name="GVT"/></ScenarioObject>
+          </Entities>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_16
+        result = check_sc_16(root, config)
+        assert result.status == "NA", f"Expected NA without tag, got {result.status}: {result.comment}"
+
+    def test_sc_16_activated_by_scenario_tag(self, config):
+        """CH_SC_16 runs (not NA) when scenario_tag is passed even though FileHeader has no prefix."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="Exported from RoadRunner version R2025b" author="RR"/>
+          <Entities>
+            <ScenarioObject name="VUT"><Vehicle name="VUT"/></ScenarioObject>
+            <ScenarioObject name="GVT"><Vehicle name="GVT"/></ScenarioObject>
+          </Entities>
+          <Init>
+            <Actions>
+              <Private entityRef="VUT">
+                <PrivateAction><TeleportAction><Position>
+                  <WorldPosition x="0" y="0" z="0" h="0"/>
+                </Position></TeleportAction></PrivateAction>
+              </Private>
+              <Private entityRef="GVT">
+                <PrivateAction><TeleportAction><Position>
+                  <WorldPosition x="20" y="0" z="0" h="0"/>
+                </Position></TeleportAction></PrivateAction>
+              </Private>
+            </Actions>
+          </Init>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_16
+        result = check_sc_16(root, config, scenario_tag="CCFhol")
+        assert result.status != "NA", f"Expected PASS/FAIL/MANUAL_REVIEW, got NA: {result.comment}"
+
+    def test_sc_17_activated_by_scenario_tag(self, config):
+        """CH_SC_17 runs (not NA) when scenario_tag='CCRs' is passed explicitly."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="Exported from RoadRunner version R2025b" author="RR"/>
+          <Entities>
+            <ScenarioObject name="VUT"><Vehicle name="VUT"/></ScenarioObject>
+            <ScenarioObject name="GVT"><Vehicle name="GVT"/></ScenarioObject>
+          </Entities>
+          <Init>
+            <Actions>
+              <Private entityRef="VUT">
+                <PrivateAction><TeleportAction><Position>
+                  <WorldPosition x="0" y="0" z="0" h="0"/>
+                </Position></TeleportAction></PrivateAction>
+              </Private>
+              <Private entityRef="GVT">
+                <PrivateAction><TeleportAction><Position>
+                  <WorldPosition x="20" y="0" z="0" h="0"/>
+                </Position></TeleportAction></PrivateAction>
+              </Private>
+            </Actions>
+          </Init>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_17
+        result = check_sc_17(root, config, scenario_tag="CCRs")
+        assert result.status != "NA", f"Expected PASS/FAIL/MANUAL_REVIEW, got NA: {result.comment}"
+
+    def test_sc_18_checks_speed_when_tag_provided(self, config):
+        """CH_SC_18 returns PASS when VUT speed is in protocol range and scenario_tag is supplied."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="Exported from RoadRunner version R2025b" author="RR"/>
+          <Entities>
+            <ScenarioObject name="VUT"><Vehicle name="VUT"/></ScenarioObject>
+          </Entities>
+          <Init>
+            <Actions>
+              <Private entityRef="VUT">
+                <PrivateAction><LongitudinalAction><SpeedAction><SpeedActionTarget>
+                  <AbsoluteTargetSpeed value="13.89"/>
+                </SpeedActionTarget></SpeedAction></LongitudinalAction></PrivateAction>
+              </Private>
+            </Actions>
+          </Init>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_18
+        # CCRs vut_speed_range_kmh = [10, 80]; 13.89 m/s = 50 km/h → in range
+        result = check_sc_18(root, config, scenario_tag="CCRs")
+        assert result.status == "PASS", f"Expected PASS for 50 km/h CCRs, got {result.status}: {result.comment}"
+
+    def test_sc_18_fails_out_of_range_with_tag(self, config):
+        """CH_SC_18 returns FAIL when VUT speed exceeds protocol range and scenario_tag is supplied."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <FileHeader description="Exported from RoadRunner version R2025b" author="RR"/>
+          <Entities>
+            <ScenarioObject name="VUT"><Vehicle name="VUT"/></ScenarioObject>
+          </Entities>
+          <Init>
+            <Actions>
+              <Private entityRef="VUT">
+                <PrivateAction><LongitudinalAction><SpeedAction><SpeedActionTarget>
+                  <AbsoluteTargetSpeed value="41.67"/>
+                </SpeedActionTarget></SpeedAction></LongitudinalAction></PrivateAction>
+              </Private>
+            </Actions>
+          </Init>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_18
+        # CCRs vut_speed_range_kmh = [10, 80]; 41.67 m/s = 150 km/h → out of range
+        result = check_sc_18(root, config, scenario_tag="CCRs")
+        assert result.status == "FAIL", f"Expected FAIL for 150 km/h CCRs, got {result.status}: {result.comment}"
+
 
 # ============================================================
 # Geometry tests (no external files needed)
@@ -798,13 +919,21 @@ class TestModelReviewSpeedSanity:
 class TestFunctionalBlock:
     """CH_FB_01 - TA file provisioning (relabeled from the old CH_MR_01)."""
 
-    def test_fb_01_present_manual_review(self, config, tmp_path):
-        (tmp_path / "TA.xml").touch()
+    def test_fb_01_present_parseable_manual_review(self, config, tmp_path):
+        (tmp_path / "TA.xml").write_text("<TA/>", encoding="utf-8")
         from src.checks.functional_block import check_fb_01
         result = check_fb_01(tmp_path, config)
         assert result.check_id == "CH_FB_01"
         assert result.category == "FunctionalBlock"
         assert result.status == "MANUAL_REVIEW"
+
+    def test_fb_01_empty_file_fails(self, config, tmp_path):
+        (tmp_path / "TA.xml").touch()
+        from src.checks.functional_block import check_fb_01
+        result = check_fb_01(tmp_path, config)
+        assert result.check_id == "CH_FB_01"
+        assert result.category == "FunctionalBlock"
+        assert result.status == "FAIL"
 
     def test_fb_01_missing_fails(self, config, tmp_path):
         from src.checks.functional_block import check_fb_01
@@ -1001,7 +1130,7 @@ class TestFullPipeline:
         (scenario_dir / "CCRs.xosc").write_bytes(xosc)
         for ext in ("rrscene", "rrscenario", "rd", "xml", "txt"):
             (scenario_dir / f"CCRs.{ext}").touch()
-        (scenario_dir / "TA.xml").touch()
+        (scenario_dir / "TA.xml").write_text("<TA/>", encoding="utf-8")
 
         from validator import run_validation
         results, stats = run_validation(scenario_dir, skip_rd=True)
@@ -1034,6 +1163,20 @@ class TestFullPipeline:
         write_excel(results, stats, out)
         assert out.exists()
         assert out.stat().st_size > 0
+        import openpyxl
+        wb = openpyxl.load_workbook(out)
+        assert wb.sheetnames[:3] == ["Validation", "Issues Log", "Run Summary"]
+        assert [wb["Validation"].cell(row=3, column=i).value for i in range(1, 10)] == [
+            "Check ID",
+            "Category",
+            "Check name",
+            "Result",
+            "Comment",
+            "Source file",
+            "Severity",
+            "Automatable or Manual",
+            "Timestamp",
+        ]
 
     def test_csv_report_created(self, tmp_path):
         from src.models import CheckResult, SummaryStats
@@ -1053,4 +1196,5 @@ class TestFullPipeline:
         assert out.exists()
         content = out.read_text()
         assert "CH_NM_01" in content
-        assert "PASS" in content
+        assert "Yes" in content
+        assert "=== RUN SUMMARY ===" not in content

@@ -90,10 +90,25 @@ def check_sc_01(xosc_root: Any, config: Config) -> CheckResult:
     params = xosc.get_parameter_declarations(xosc_root)
     if params:
         return _make("CH_SC_01", "PASS", f"{len(params)} parameter declaration(s) found")
+
+    # RoadRunner kinematic export: variations are encoded as a FollowTrajectoryAction
+    # polyline in Init instead of ParameterDeclarations. Count vertices as proxy for coverage.
+    entities = [xosc.get_entity_name(e) for e in xosc.get_entities(xosc_root)]
+    for entity in entities:
+        verts = xosc.get_trajectory_vertices(xosc_root, entity)
+        if len(verts) > 1:
+            n = len(verts)
+            return _make(
+                "CH_SC_01",
+                "PASS",
+                f"Kinematic trajectory with {n} waypoints found for '{entity}' "
+                f"(RoadRunner path-based format — variations encoded as Init FollowTrajectoryAction, "
+                f"not ParameterDeclarations)",
+            )
     return _make(
         "CH_SC_01",
         "FAIL",
-        "No ParameterDeclarations found - scenario has no variation parameters. "
+        "No ParameterDeclarations and no kinematic trajectory found. "
         "All EuroNCAP speed/overlap variations must be parameterised.",
     )
 
@@ -182,27 +197,50 @@ def check_sc_05(xosc_root: Any, xodr_root: Any, config: Config) -> CheckResult:
     vut = _identify_vut(xosc_root, config)
     if not vut:
         return _make("CH_SC_05", "MANUAL_REVIEW", "Could not auto-detect VUT - verify lane placement manually")
-    if vut not in lane_positions:
-        # WorldPosition used instead of LanePosition - harder to validate automatically
+
+    if vut in lane_positions:
+        vut_lane = lane_positions[vut]["lane_id"]
+        if vut_lane is None:
+            return _make(
+                "CH_SC_05",
+                "MANUAL_REVIEW",
+                f"VUT '{vut}' lane ID is a parameter reference - verify right-lane placement manually",
+            )
+        if vut_lane < 0:
+            return _make("CH_SC_05", "PASS", f"VUT '{vut}' in lane {vut_lane} (right side)")
         return _make(
             "CH_SC_05",
-            "MANUAL_REVIEW",
-            f"VUT '{vut}' uses WorldPosition (not LanePosition) - verify right-lane placement manually",
+            "FAIL",
+            f"VUT '{vut}' in lane {vut_lane} - expected negative lane ID (right side of road)",
         )
-    vut_lane = lane_positions[vut]["lane_id"]
-    if vut_lane is None:
-        return _make(
-            "CH_SC_05",
-            "MANUAL_REVIEW",
-            f"VUT '{vut}' lane ID is a parameter reference - verify right-lane placement manually",
-        )
-    # In OpenDRIVE: negative IDs = right side of road
-    if vut_lane < 0:
-        return _make("CH_SC_05", "PASS", f"VUT '{vut}' in lane {vut_lane} (right side)")
+
+    # WorldPosition fallback: for east-heading roads (h≈0°), negative y = right lane.
+    # This holds for OpenDRIVE/RoadRunner convention where y increases left of travel.
+    positions = xosc.get_init_positions(xosc_root)
+    if vut in positions:
+        vut_pos = positions[vut]
+        hdg_deg = math.degrees(vut_pos.get("h", 0.0)) % 360
+        east_heading = hdg_deg <= 30 or hdg_deg >= 330
+        if east_heading:
+            y = vut_pos["y"]
+            if y < -0.1:
+                return _make(
+                    "CH_SC_05",
+                    "PASS",
+                    f"VUT '{vut}' at y={y:.2f} m (negative = right lane for east-heading road)",
+                )
+            if y > 0.1:
+                return _make(
+                    "CH_SC_05",
+                    "FAIL",
+                    f"VUT '{vut}' at y={y:.2f} m (positive y = left lane for east-heading road). "
+                    "VUT must be in the right lane.",
+                )
+
     return _make(
         "CH_SC_05",
-        "FAIL",
-        f"VUT '{vut}' in lane {vut_lane} - expected negative lane ID (right side of road)",
+        "MANUAL_REVIEW",
+        f"VUT '{vut}' uses WorldPosition with non-trivial heading - verify right-lane placement manually",
     )
 
 
@@ -274,9 +312,9 @@ def check_sc_07(xosc_root: Any, config: Config) -> CheckResult:
     )
 
 
-def check_sc_08(xosc_root: Any, config: Config) -> CheckResult:
+def check_sc_08(xosc_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """Scenario satisfies applicable protocol requirements - flagged for manual review."""
-    tag = _detect_scenario_tag(xosc_root, config)
+    tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
     hint = ""
     if tag:
         proto = config.scenario_protocol(tag)
@@ -572,13 +610,28 @@ def _get_impact_percentage(
     return pct, f"VUT='{vut_name}', Target='{target_name}'"
 
 
-def check_sc_16(xosc_root: Any, config: Config) -> CheckResult:
+def check_sc_16(xosc_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """Impact % for turning/crossing ≈ protocol value (±5%)."""
-    tag = _detect_scenario_tag(xosc_root, config)
+    tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
     proto = config.scenario_protocol(tag) if tag else None
 
     if not proto or proto.type not in ("crossing",):
         return _make("CH_SC_16", "NA", "Not a turning/crossing scenario")
+
+    # RoadRunner kinematic format: actors follow a trajectory; start positions are
+    # hundreds of metres from the impact point and computing overlap there gives 0%.
+    # The actual impact geometry is embedded in the trajectory and can only be
+    # verified visually or in the HIL test.
+    vut = _identify_vut(xosc_root, config)
+    if vut and xosc.has_init_follow_trajectory(xosc_root, vut):
+        expected = proto.impact_overlap_pct
+        return _make(
+            "CH_SC_16",
+            "MANUAL_REVIEW",
+            f"Scenario uses RoadRunner kinematic trajectory — impact overlap cannot be computed "
+            f"from Init positions. Protocol requires {expected}% ±{config.impact_tolerance_pct}%. "
+            f"Verify in RoadRunner or HIL test.",
+        )
 
     pct, msg = _get_impact_percentage(xosc_root, config, proto.type)
     if pct is None:
@@ -600,13 +653,26 @@ def check_sc_16(xosc_root: Any, config: Config) -> CheckResult:
     )
 
 
-def check_sc_17(xosc_root: Any, config: Config) -> CheckResult:
+def check_sc_17(xosc_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """Impact % for longitudinal must exactly match protocol value."""
-    tag = _detect_scenario_tag(xosc_root, config)
+    tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
     proto = config.scenario_protocol(tag) if tag else None
 
     if not proto or proto.type != "longitudinal":
         return _make("CH_SC_17", "NA", "Not a longitudinal scenario")
+
+    # RoadRunner kinematic format: same limitation as CH_SC_16 — start positions
+    # are far from impact point; overlap computation from Init gives meaningless 0%.
+    vut = _identify_vut(xosc_root, config)
+    if vut and xosc.has_init_follow_trajectory(xosc_root, vut):
+        expected = proto.impact_overlap_pct
+        return _make(
+            "CH_SC_17",
+            "MANUAL_REVIEW",
+            f"Scenario uses RoadRunner kinematic trajectory — longitudinal impact overlap cannot "
+            f"be computed from Init positions. Protocol requires {expected}% "
+            f"(±{config.longitudinal_impact_tolerance_pct}%). Verify in RoadRunner or HIL test.",
+        )
 
     pct, msg = _get_impact_percentage(xosc_root, config, proto.type)
     if pct is None:
@@ -627,9 +693,9 @@ def check_sc_17(xosc_root: Any, config: Config) -> CheckResult:
     )
 
 
-def check_sc_18(xosc_root: Any, config: Config) -> CheckResult:
+def check_sc_18(xosc_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """VUT speed and Target speed at impact must match scenario requirements."""
-    tag = _detect_scenario_tag(xosc_root, config)
+    tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
     proto = config.scenario_protocol(tag) if tag else None
 
     if not proto:
@@ -643,9 +709,23 @@ def check_sc_18(xosc_root: Any, config: Config) -> CheckResult:
     if not vut:
         return _make("CH_SC_18", "MANUAL_REVIEW", "Could not identify VUT entity")
 
+    # Try explicit AbsoluteTargetSpeed in Init first
     vut_speed_ms = xosc.get_init_speed(xosc_root, vut)
+    speed_source = "Init AbsoluteTargetSpeed"
+
+    # Fallback: compute max cruise speed from trajectory vertices (RoadRunner kinematic format)
     if vut_speed_ms is None:
-        return _make("CH_SC_18", "MANUAL_REVIEW", f"VUT init speed not found - check scenario type '{tag}'")
+        traj_speed_kmh = xosc.get_trajectory_speed_kmh(xosc_root, vut)
+        if traj_speed_kmh is not None:
+            vut_speed_ms = traj_speed_kmh / 3.6
+            speed_source = "trajectory vertex sequence (peak cruise speed)"
+
+    if vut_speed_ms is None:
+        return _make(
+            "CH_SC_18",
+            "MANUAL_REVIEW",
+            f"VUT speed not found in Init or trajectory - verify manually for scenario type '{tag}'",
+        )
 
     vut_speed_kmh = vut_speed_ms * 3.6
     if proto.vut_speed_range_kmh:
@@ -654,12 +734,14 @@ def check_sc_18(xosc_root: Any, config: Config) -> CheckResult:
             return _make(
                 "CH_SC_18",
                 "PASS",
-                f"VUT speed = {vut_speed_kmh:.1f} km/h in range [{lo}, {hi}] km/h for {tag}",
+                f"VUT speed = {vut_speed_kmh:.1f} km/h in range [{lo}, {hi}] km/h for {tag} "
+                f"(source: {speed_source})",
             )
         return _make(
             "CH_SC_18",
             "FAIL",
-            f"VUT speed = {vut_speed_kmh:.1f} km/h - outside protocol range [{lo}, {hi}] km/h for {tag}",
+            f"VUT speed = {vut_speed_kmh:.1f} km/h - outside protocol range [{lo}, {hi}] km/h for {tag} "
+            f"(source: {speed_source})",
         )
 
     return _make(
@@ -705,18 +787,36 @@ def check_sc_20(xosc_root: Any, config: Config) -> CheckResult:
 
 
 def check_sc_21(xosc_root: Any, config: Config) -> CheckResult:
-    """VUT must be first in the action phase (Init Private ordering)."""
+    """VUT must be first in the action phase (or Init Private ordering for RoadRunner kinematic format)."""
     vut = _identify_vut(xosc_root, config)
     actors = xosc.get_actors_ordered(xosc_root)
-    if not actors:
-        return _make("CH_SC_21", "MANUAL_REVIEW", "No ManeuverGroup actor refs found - verify VUT ordering manually")
-    if vut and actors and actors[0] == vut:
-        return _make("CH_SC_21", "PASS", f"VUT '{actors[0]}' is first in action phase")
+
+    if actors:
+        if vut and actors[0] == vut:
+            return _make("CH_SC_21", "PASS", f"VUT '{actors[0]}' is first in action phase (ManeuverGroup)")
+        return _make(
+            "CH_SC_21",
+            "FAIL",
+            f"First actor in action phase is '{actors[0]}' - expected VUT ('{vut}'). "
+            "Move VUT to the top of the action phase.",
+        )
+
+    # RoadRunner kinematic format: no ManeuverGroup actors; use Init/Private ordering.
+    init_order = xosc.get_init_entity_ordering(xosc_root)
+    if not init_order:
+        return _make("CH_SC_21", "MANUAL_REVIEW", "No actor ordering found in ManeuverGroup or Init - verify manually")
+    if vut and init_order[0] == vut:
+        return _make(
+            "CH_SC_21",
+            "PASS",
+            f"VUT '{init_order[0]}' is first in Init/Private ordering "
+            f"(RoadRunner kinematic format — no ManeuverGroup actor refs)",
+        )
     return _make(
         "CH_SC_21",
         "FAIL",
-        f"First actor in action phase is '{actors[0] if actors else '?'}' - expected VUT ('{vut}'). "
-        "Move VUT to the top of the action phase.",
+        f"First entity in Init ordering is '{init_order[0]}' - expected VUT ('{vut}'). "
+        "VUT must be defined first in Init.",
     )
 
 
@@ -774,7 +874,7 @@ def check_sc_22(xosc_root: Any, config: Config) -> CheckResult:
     )
 
 
-def run_all(xosc_root: Any, xodr_root: Any, config: Config) -> list[CheckResult]:
+def run_all(xosc_root: Any, xodr_root: Any, config: Config, scenario_tag: str | None = None) -> list[CheckResult]:
     return [
         check_sc_01(xosc_root, config),
         check_sc_02(xosc_root, config),
@@ -783,7 +883,7 @@ def run_all(xosc_root: Any, xodr_root: Any, config: Config) -> list[CheckResult]
         check_sc_05(xosc_root, xodr_root, config),
         check_sc_06(xosc_root, config),
         check_sc_07(xosc_root, config),
-        check_sc_08(xosc_root, config),
+        check_sc_08(xosc_root, config, scenario_tag=scenario_tag),
         check_sc_09(xosc_root, config),
         check_sc_10(xosc_root, xodr_root, config),
         check_sc_11(xosc_root, config),
@@ -791,9 +891,9 @@ def run_all(xosc_root: Any, xodr_root: Any, config: Config) -> list[CheckResult]
         check_sc_13(xosc_root, config),
         check_sc_14(xosc_root, config),
         check_sc_15(xosc_root, config),
-        check_sc_16(xosc_root, config),
-        check_sc_17(xosc_root, config),
-        check_sc_18(xosc_root, config),
+        check_sc_16(xosc_root, config, scenario_tag=scenario_tag),
+        check_sc_17(xosc_root, config, scenario_tag=scenario_tag),
+        check_sc_18(xosc_root, config, scenario_tag=scenario_tag),
         check_sc_19(xosc_root, config),
         check_sc_20(xosc_root, config),
         check_sc_21(xosc_root, config),

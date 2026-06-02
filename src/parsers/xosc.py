@@ -134,25 +134,6 @@ def get_parameter_declarations(root: Any) -> list[dict[str, str]]:
     return params
 
 
-def get_all_waypoints_by_entity(root: Any) -> dict[str, list[dict[str, float]]]:
-    result: dict[str, list[dict[str, float]]] = {}
-    for mg in xpath(root, "//ManeuverGroup"):
-        entity_refs = [e.get("entityRef", "") for e in mg.xpath(".//EntityRef")]
-        wps = [
-            {
-                "x": _safe_float(wp.get("x", "0")) or 0.0,
-                "y": _safe_float(wp.get("y", "0")) or 0.0,
-                "z": _safe_float(wp.get("z", "0")) or 0.0,
-                "h": _safe_float(wp.get("h", "0")) or 0.0,
-            }
-            for wp in mg.xpath(".//Waypoint//WorldPosition")
-        ]
-        for ref in entity_refs:
-            if ref:
-                result.setdefault(ref, []).extend(wps)
-    return result
-
-
 def has_anchor(root: Any, entity_name: str) -> bool:
     """Returns True if entity has anchoring enabled."""
     for obj in xpath(root, f"//ScenarioObject[@name='{entity_name}']"):
@@ -288,6 +269,109 @@ def get_braking_decel_actions(root: Any) -> list[dict]:
                         "target_speed": target,
                     })
     return results
+
+
+def get_trajectory_vertices(root: Any, entity_name: str) -> list[dict[str, float]]:
+    """Returns list of {time, x, y, h} from Init FollowTrajectoryAction polyline vertices.
+
+    RoadRunner kinematic exports store the full trajectory as a Polyline inside
+    Init//Private//FollowTrajectoryAction rather than as ParameterDeclarations.
+    """
+    vertices: list[dict[str, float]] = []
+    for priv in xpath(root, f"//Init//Private[@entityRef='{entity_name}']"):
+        for vertex in priv.xpath(".//FollowTrajectoryAction//Trajectory//Shape//Polyline//Vertex"):
+            t = _safe_float(vertex.get("time", "0"))
+            wp = vertex.xpath(".//WorldPosition")
+            if wp and t is not None:
+                x = _safe_float(wp[0].get("x", "0"))
+                y = _safe_float(wp[0].get("y", "0"))
+                h = _safe_float(wp[0].get("h", "0"))
+                if x is not None and y is not None:
+                    vertices.append({"time": t, "x": x, "y": y, "h": h or 0.0})
+    return vertices
+
+
+def get_trajectory_speed_kmh(root: Any, entity_name: str) -> float | None:
+    """Computes peak cruise speed in km/h from Init trajectory vertex sequence.
+
+    Takes the maximum speed observed over consecutive Vertex pairs, which
+    represents the constant-speed cruise phase for RoadRunner kinematic scenarios.
+    Returns None if fewer than two vertices are present.
+    """
+    import math
+    vertices = get_trajectory_vertices(root, entity_name)
+    if len(vertices) < 2:
+        return None
+    speeds = []
+    for i in range(1, len(vertices)):
+        dt = vertices[i]["time"] - vertices[i - 1]["time"]
+        if dt <= 0:
+            continue
+        dx = vertices[i]["x"] - vertices[i - 1]["x"]
+        dy = vertices[i]["y"] - vertices[i - 1]["y"]
+        speeds.append(math.hypot(dx, dy) / dt * 3.6)
+    return max(speeds) if speeds else None
+
+
+def has_init_follow_trajectory(root: Any, entity_name: str) -> bool:
+    """True if the entity's Init section contains a FollowTrajectoryAction."""
+    for priv in xpath(root, f"//Init//Private[@entityRef='{entity_name}']"):
+        if priv.xpath(".//FollowTrajectoryAction"):
+            return True
+    return False
+
+
+def get_init_entity_ordering(root: Any) -> list[str]:
+    """Returns entity names in the order their Init/Private blocks appear.
+
+    RoadRunner places the VUT first; this is the ordering check used when
+    ManeuverGroup actor refs are absent (CH_SC_21 fallback).
+    """
+    seen: list[str] = []
+    for priv in xpath(root, "//Init//Private"):
+        name = priv.get("entityRef", "")
+        if name and name not in seen:
+            seen.append(name)
+    return seen
+
+
+def get_all_waypoints_by_entity(root: Any) -> dict[str, list[dict[str, float]]]:
+    result: dict[str, list[dict[str, float]]] = {}
+
+    # Standard OSC: Waypoints in ManeuverGroup
+    for mg in xpath(root, "//ManeuverGroup"):
+        entity_refs = [e.get("entityRef", "") for e in mg.xpath(".//EntityRef")]
+        wps = [
+            {
+                "x": _safe_float(wp.get("x", "0")) or 0.0,
+                "y": _safe_float(wp.get("y", "0")) or 0.0,
+                "z": _safe_float(wp.get("z", "0")) or 0.0,
+                "h": _safe_float(wp.get("h", "0")) or 0.0,
+            }
+            for wp in mg.xpath(".//Waypoint//WorldPosition")
+        ]
+        for ref in entity_refs:
+            if ref:
+                result.setdefault(ref, []).extend(wps)
+
+    # RoadRunner kinematic format: Vertex elements in Init FollowTrajectoryAction
+    if not result:
+        for priv in xpath(root, "//Init//Private"):
+            entity_name = priv.get("entityRef", "")
+            if not entity_name:
+                continue
+            for vertex in priv.xpath(".//FollowTrajectoryAction//Trajectory//Shape//Polyline//Vertex"):
+                wp = vertex.xpath(".//WorldPosition")
+                if wp:
+                    x = _safe_float(wp[0].get("x", "0"))
+                    y = _safe_float(wp[0].get("y", "0"))
+                    if x is not None and y is not None:
+                        result.setdefault(entity_name, []).append({
+                            "x": x, "y": y,
+                            "z": _safe_float(wp[0].get("z", "0")) or 0.0,
+                            "h": _safe_float(wp[0].get("h", "0")) or 0.0,
+                        })
+    return result
 
 
 def get_action_phase_speeds(root: Any, entity_name: str) -> list[float]:
