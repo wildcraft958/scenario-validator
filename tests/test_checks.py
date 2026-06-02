@@ -198,7 +198,7 @@ class TestScenarioChecks:
         from src.checks.scenario import check_sc_07
         result = check_sc_07(xosc_sample, config)
         assert result.check_id == "CH_SC_07"
-        assert result.status in ("NA", "PASS", "FAIL")
+        assert result.status in ("NA", "PASS", "FAIL", "MANUAL_REVIEW")
 
     def test_sc_08_always_manual(self, xosc_sample, config):
         from src.checks.scenario import check_sc_08

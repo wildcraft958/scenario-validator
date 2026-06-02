@@ -313,6 +313,32 @@ def get_trajectory_speed_kmh(root: Any, entity_name: str) -> float | None:
     return max(speeds) if speeds else None
 
 
+def get_polyline_curvature_radii(root: Any, entity_name: str) -> list[float]:
+    """Compute turning radii (m) from vertex heading changes in a polyline trajectory.
+
+    Returns radii only for sections where the heading is actively changing (curved part).
+    Straight sections (|dh| < 0.01 rad) are excluded. Used by CH_SC_07 to verify
+    constant-radius turns from RoadRunner polyline trajectories.
+    """
+    import math
+    vertices = get_trajectory_vertices(root, entity_name)
+    radii: list[float] = []
+    for i in range(1, len(vertices)):
+        dh = vertices[i]["h"] - vertices[i - 1]["h"]
+        # Normalise to [-π, π] to handle wrap-around (e.g. -π → +π)
+        while dh > math.pi:
+            dh -= 2 * math.pi
+        while dh < -math.pi:
+            dh += 2 * math.pi
+        dl = math.hypot(
+            vertices[i]["x"] - vertices[i - 1]["x"],
+            vertices[i]["y"] - vertices[i - 1]["y"],
+        )
+        if abs(dh) > 0.01 and dl > 0.01:
+            radii.append(dl / abs(dh))
+    return radii
+
+
 def has_init_follow_trajectory(root: Any, entity_name: str) -> bool:
     """True if the entity's Init section contains a FollowTrajectoryAction."""
     for priv in xpath(root, f"//Init//Private[@entityRef='{entity_name}']"):

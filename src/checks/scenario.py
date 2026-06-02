@@ -267,10 +267,11 @@ def check_sc_06(xosc_root: Any, config: Config) -> CheckResult:
 
 def check_sc_07(xosc_root: Any, config: Config) -> CheckResult:
     """
-    Curvature path part 2: curvStart must equal curvEnd (constant radius).
-    Radius = 1 / curvature must match protocol value.
+    Curvature path part 2: constant radius detected.
+    Checks Clothoid elements first; falls back to polyline vertex heading analysis for
+    RoadRunner kinematic exports which use Polyline instead of Clothoid.
     """
-    # Check ClothoidSpline segments directly from xosc
+    # --- Primary: Clothoid/ClothoidSpline (standard OSC) ---
     constant_segments: list[float] = []
     varying_segments: list[tuple[float, float]] = []
 
@@ -288,27 +289,49 @@ def check_sc_07(xosc_root: Any, config: Config) -> CheckResult:
             elif cs_f != 0 or ce_f != 0:
                 varying_segments.append((cs_f, ce_f))
 
-    if not constant_segments and not varying_segments:
-        return _make("CH_SC_07", "NA", "No Clothoid trajectory found - not a turning scenario")
-
-    if varying_segments:
+    if constant_segments or varying_segments:
+        if varying_segments:
+            return _make(
+                "CH_SC_07",
+                "FAIL",
+                f"Non-constant curvature: curvStart != curvEnd in {len(varying_segments)} segment(s). "
+                f"Values: {varying_segments}. Part 2 requires curvStart == curvEnd.",
+            )
+        radii = constant_segments
+        if len(set(round(r, 1) for r in radii)) == 1:
+            return _make("CH_SC_07", "PASS", f"Constant curvature radius = {radii[0]:.2f} m (Clothoid)")
+        spread = max(radii) - min(radii)
         return _make(
             "CH_SC_07",
             "FAIL",
-            f"Non-constant curvature segments: curvStart != curvEnd in {len(varying_segments)} segment(s). "
-            f"Values: {varying_segments}. For part 2, curvStart must equal curvEnd.",
+            f"Curvature radius varies: {min(radii):.2f}–{max(radii):.2f} m "
+            f"(spread {spread:.2f} m). Should be constant for part 2.",
         )
 
-    radii = constant_segments
-    if len(set(round(r, 1) for r in radii)) == 1:
-        return _make("CH_SC_07", "PASS", f"Constant curvature radius = {radii[0]:.2f} m")
+    # --- Fallback: Polyline vertex heading analysis (RoadRunner kinematic format) ---
+    vut = _identify_vut(xosc_root, config)
+    if not vut:
+        return _make("CH_SC_07", "NA", "No Clothoid trajectory and no VUT identified")
 
-    spread = max(radii) - min(radii)
+    radii = xosc.get_polyline_curvature_radii(xosc_root, vut)
+    if not radii:
+        return _make("CH_SC_07", "NA", "No Clothoid trajectory and VUT heading is constant — not a turning scenario")
+
+    # A discrete polyline approximation of a circular arc produces outlier radius values
+    # at entry/exit transitions even for a perfect constant-radius curve. Use the median
+    # of the lower half to estimate the actual turn radius without transition noise.
+    sorted_r = sorted(radii)
+    median_r = sorted_r[len(sorted_r) // 2]
+    core_radii = [r for r in radii if r <= 2.5 * median_r]
+    est_radius = (sum(core_radii) / len(core_radii)) if core_radii else median_r
+
     return _make(
         "CH_SC_07",
-        "FAIL",
-        f"Curvature radius varies across segments: {min(radii):.2f}-{max(radii):.2f} m "
-        f"(spread {spread:.2f} m). Should be constant to match protocol turn radius.",
+        "MANUAL_REVIEW",
+        f"Curved trajectory detected: ~{est_radius:.1f} m estimated radius "
+        f"({len(radii)} curved vertex pairs, polyline approximation). "
+        f"Polyline discretisation prevents precise auto-verification — "
+        f"confirm constant-radius arc in RoadRunner road geometry.",
     )
 
 
@@ -527,13 +550,23 @@ def check_sc_14(xosc_root: Any, config: Config) -> CheckResult:
 
     if config.static_target_name_patterns:
         patterns_upper = [p.upper() for p in config.static_target_name_patterns]
-        static_candidates = [
+        name_matched = [
             e for e in entities
             if e != vut and any(e.upper().startswith(p) for p in patterns_upper)
         ]
     else:
-        # Fallback: any non-VUT entity with zero or missing init speed
-        static_candidates = [e for e in entities if e != vut]
+        name_matched = [e for e in entities if e != vut]
+
+    # Also catch entities that have explicit init_spd=0 and no trajectory but are not
+    # name-matched (e.g. LargeObstructionVehicle, SmallObstructionVehicle). These are
+    # unambiguously static — no trajectory and speed explicitly set to 0.
+    explicit_static = [
+        e for e in entities
+        if e != vut and e not in name_matched
+        and xosc.get_init_speed(xosc_root, e) == 0.0
+        and not xosc.has_init_follow_trajectory(xosc_root, e)
+    ]
+    static_candidates = name_matched + explicit_static
 
     if not static_candidates:
         return _make("CH_SC_14", "NA", "No static targets/obstructions detected")
@@ -562,11 +595,29 @@ def check_sc_15(xosc_root: Any, config: Config) -> CheckResult:
     if not emt_candidates:
         return _make("CH_SC_15", "NA", "No stationary EuroNCAP targets (EMT/EPTa/EPTc/EBTa) detected")
 
-    results = [_check_zero_speed(xosc_root, config, e, "CH_SC_15") for e in emt_candidates]
+    # Entities with a kinematic trajectory are actively moving in this scenario
+    # (e.g. EPTa/EPTc in crossing scenarios). Skip them — they are correctly moving.
+    stationary = [e for e in emt_candidates if not xosc.has_init_follow_trajectory(xosc_root, e)]
+    moving_via_traj = [e for e in emt_candidates if xosc.has_init_follow_trajectory(xosc_root, e)]
+
+    if not stationary and moving_via_traj:
+        return _make(
+            "CH_SC_15",
+            "NA",
+            f"All matched EuroNCAP targets ({', '.join(moving_via_traj)}) use kinematic trajectories "
+            f"— they are moving actors in this scenario, not stationary targets. No zero-speed check needed.",
+        )
+
+    results = [_check_zero_speed(xosc_root, config, e, "CH_SC_15") for e in stationary]
     fails = [r for r in results if r.status == "FAIL"]
+    suffix = (f" Note: {', '.join(moving_via_traj)} skipped (kinematic trajectory — moving actor)."
+              if moving_via_traj else "")
     if not fails:
-        return _make("CH_SC_15", "PASS", f"Stationary targets ({', '.join(emt_candidates)}) have 0 m/s init speed")
-    return _make("CH_SC_15", "FAIL", "; ".join(r.comment for r in fails))
+        if stationary:
+            return _make("CH_SC_15", "PASS",
+                         f"Stationary targets ({', '.join(stationary)}) have 0 m/s init speed.{suffix}")
+        return _make("CH_SC_15", "NA", f"No truly stationary targets found.{suffix}")
+    return _make("CH_SC_15", "FAIL", "; ".join(r.comment for r in fails) + suffix)
 
 
 def _get_impact_percentage(

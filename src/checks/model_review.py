@@ -30,42 +30,55 @@ def _make(check_id: str, status: str, comment: str = "") -> CheckResult:
 def check_mr_01(xosc_root: Any, config: Config) -> CheckResult:
     """No garbage/incorrect speed values for the VUT and any asset.
 
-    Scans every entity's Init speed and action-phase speeds. A speed is "garbage" when
-    it is negative or above config.speed_sanity_max_kmh. Parameter references (e.g.
-    '$speed') return None and are skipped - they cannot be evaluated at parse time.
+    Checks explicit AbsoluteTargetSpeed values in Init and action phase, plus
+    peak cruise speeds derived from kinematic trajectory vertices (RoadRunner format).
+    A speed is flagged when it is negative or above config.speed_sanity_max_kmh.
     """
-    max_ms = config.speed_sanity_max_kmh / 3.6
+    max_kmh = config.speed_sanity_max_kmh
+    max_ms = max_kmh / 3.6
 
     bad: list[str] = []
     checked = 0
+    sources: list[str] = []
+
     for entity in xosc.get_entities(xosc_root):
         name = xosc.get_entity_name(entity)
-        speeds: list[float] = []
+
+        # Explicit speeds: Init AbsoluteTargetSpeed + action-phase speeds
+        explicit: list[float] = []
         init_speed = xosc.get_init_speed(xosc_root, name)
         if init_speed is not None:
-            speeds.append(init_speed)
-        speeds.extend(xosc.get_action_phase_speeds(xosc_root, name))
+            explicit.append(init_speed)
+        explicit.extend(xosc.get_action_phase_speeds(xosc_root, name))
 
-        for s in speeds:
+        for s in explicit:
             checked += 1
             if s < 0:
-                bad.append(f"'{name}': {s} m/s (negative)")
+                bad.append(f"'{name}': {s:.2f} m/s (negative)")
             elif s > max_ms:
-                bad.append(f"'{name}': {s} m/s ({s * 3.6:.0f} km/h > {config.speed_sanity_max_kmh:.0f} km/h)")
+                bad.append(f"'{name}': {s * 3.6:.0f} km/h > {max_kmh:.0f} km/h")
+
+        # Trajectory-derived speed (RoadRunner kinematic format)
+        traj_kmh = xosc.get_trajectory_speed_kmh(xosc_root, name)
+        if traj_kmh is not None:
+            checked += 1
+            sources.append(f"'{name}' {traj_kmh:.1f} km/h")
+            if traj_kmh < 0:
+                bad.append(f"'{name}' trajectory: {traj_kmh:.1f} km/h (negative)")
+            elif traj_kmh > max_kmh:
+                bad.append(f"'{name}' trajectory: {traj_kmh:.1f} km/h > {max_kmh:.0f} km/h")
 
     if checked == 0:
         return _make("CH_MR_01", "NA", "No numeric speed values found to validate")
 
     if bad:
-        return _make(
-            "CH_MR_01",
-            "FAIL",
-            "Garbage/incorrect speed value(s): " + "; ".join(bad),
-        )
+        return _make("CH_MR_01", "FAIL", "Garbage/incorrect speed value(s): " + "; ".join(bad))
+
+    detail = f" Trajectory speeds: {', '.join(sources)}." if sources else ""
     return _make(
         "CH_MR_01",
         "PASS",
-        f"All {checked} speed value(s) are within [0, {config.speed_sanity_max_kmh:.0f}] km/h",
+        f"All {checked} speed value(s) within [0, {max_kmh:.0f}] km/h.{detail}",
     )
 
 
