@@ -57,7 +57,14 @@ def has_junctions(root: Any) -> bool:
 
 
 def get_junction_connection_curvatures(root: Any) -> list[float]:
-    """Returns curvature values of roads that are part of a junction connection."""
+    """Returns curvature values of roads that are part of a junction connection.
+
+    Only constant-radius arc elements are used. Spiral (clothoid transition)
+    elements are intentionally skipped: their curvStart/curvEnd endpoints vary
+    linearly and may differ from the intended arc curvature, producing spurious
+    near-8m values that fail the tight ±0.1m tolerance in CH_RD_03.
+    Fallback to spiral midpoint only if a junction road has no arc geometry at all.
+    """
     curv_values: list[float] = []
     junction_roads: set[str] = set()
     for conn in xpath(root, "//junction/connection"):
@@ -68,19 +75,28 @@ def get_junction_connection_curvatures(root: Any) -> list[float]:
     for road in get_roads(root):
         if road.get("id") not in junction_roads:
             continue
+        arc_curvatures: list[float] = []
+        spiral_midpoints: list[float] = []
         for geom in road.xpath(".//planView/geometry"):
             arc = geom.xpath("arc")
             spiral = geom.xpath("spiral")
             if arc:
                 k = arc[0].get("curvature")
                 if k:
-                    curv_values.append(abs(float(k)))
+                    arc_curvatures.append(abs(float(k)))
             elif spiral:
-                ks = spiral[0].get("curvStart")
-                ke = spiral[0].get("curvEnd")
-                for k in [ks, ke]:
-                    if k and float(k) != 0:
-                        curv_values.append(abs(float(k)))
+                # Midpoint curvature is only used when the road has no arc geometry
+                ks_str = spiral[0].get("curvStart")
+                ke_str = spiral[0].get("curvEnd")
+                if ks_str is not None and ke_str is not None:
+                    ks, ke = float(ks_str), float(ke_str)
+                    mid = (ks + ke) / 2
+                    if mid != 0:
+                        spiral_midpoints.append(abs(mid))
+        if arc_curvatures:
+            curv_values.extend(arc_curvatures)
+        elif spiral_midpoints:
+            curv_values.extend(spiral_midpoints)
     return curv_values
 
 

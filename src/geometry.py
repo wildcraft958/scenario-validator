@@ -156,6 +156,111 @@ def compute_impact_percentage(
     return _project_crossing(vut, target)
 
 
+def _interp_vertex(vertices: list[dict], t: float) -> tuple[float, float, float]:
+    """Linear interpolation of (x, y, h) from a trajectory vertex list at time t."""
+    if not vertices:
+        return 0.0, 0.0, 0.0
+    if t <= vertices[0]["time"]:
+        v = vertices[0]
+        return v["x"], v["y"], v["h"]
+    if t >= vertices[-1]["time"]:
+        v = vertices[-1]
+        return v["x"], v["y"], v["h"]
+    for i in range(1, len(vertices)):
+        t0, t1 = vertices[i - 1]["time"], vertices[i]["time"]
+        if t0 <= t <= t1:
+            if t1 == t0:
+                v = vertices[i]
+                return v["x"], v["y"], v["h"]
+            frac = (t - t0) / (t1 - t0)
+            v0, v1 = vertices[i - 1], vertices[i]
+            # Heading interpolation: handle wrap-around
+            dh = v1["h"] - v0["h"]
+            while dh > math.pi:
+                dh -= 2 * math.pi
+            while dh < -math.pi:
+                dh += 2 * math.pi
+            return (
+                v0["x"] + frac * (v1["x"] - v0["x"]),
+                v0["y"] + frac * (v1["y"] - v0["y"]),
+                v0["h"] + frac * dh,
+            )
+    v = vertices[-1]
+    return v["x"], v["y"], v["h"]
+
+
+def compute_kinematic_impact_pct(
+    vut_vertices: list[dict],
+    tgt_vertices: list[dict] | None,
+    tgt_init: VehicleState | None,
+    vut_dims: tuple[float, float],
+    tgt_dims: tuple[float, float],
+) -> float:
+    """Compute max bounding-box overlap % using actual trajectory positions.
+
+    This is the USP of the validator: no other RR-export tool reconstructs the
+    physical impact geometry from kinematic vertex data without running a full
+    simulation. Both VUT and target positions are stepped through their trajectory
+    vertex timestamps; the maximum bounding-box overlap across all steps is returned.
+
+    Algorithm:
+      For each VUT trajectory timestep t:
+        - VUT position: from vut_vertices (exact)
+        - Target position: interpolated from tgt_vertices if available,
+          else extrapolated as tgt_init + speed * t (constant heading)
+      Build shapely bounding boxes for both; return max overlap_percentage().
+
+    Args:
+        vut_vertices:  [{time, x, y, h}, ...] from xosc Polyline
+        tgt_vertices:  target trajectory or None
+        tgt_init:      VehicleState for constant-speed extrapolation fallback
+        vut_dims:      (length, width) in metres
+        tgt_dims:      (length, width) in metres
+    """
+    if not vut_vertices:
+        return 0.0
+
+    vut_len, vut_wid = vut_dims
+    tgt_len, tgt_wid = tgt_dims
+
+    best_overlap = 0.0
+
+    for v in vut_vertices:
+        t = v["time"]
+        vut_state = VehicleState(
+            x=v["x"], y=v["y"],
+            heading_deg=math.degrees(v["h"]),
+            length=vut_len, width=vut_wid,
+        )
+
+        if tgt_vertices:
+            tx, ty, th = _interp_vertex(tgt_vertices, t)
+            tgt_state = VehicleState(
+                x=tx, y=ty,
+                heading_deg=math.degrees(th),
+                length=tgt_len, width=tgt_wid,
+            )
+        elif tgt_init is not None:
+            hdg_rad = math.radians(tgt_init.heading_deg)
+            tgt_state = VehicleState(
+                x=tgt_init.x + math.cos(hdg_rad) * tgt_init.speed_ms * t,
+                y=tgt_init.y + math.sin(hdg_rad) * tgt_init.speed_ms * t,
+                heading_deg=tgt_init.heading_deg,
+                length=tgt_len, width=tgt_wid,
+                speed_ms=tgt_init.speed_ms,
+            )
+        else:
+            continue
+
+        vut_poly = vehicle_polygon(vut_state)
+        tgt_poly = vehicle_polygon(tgt_state)
+        ov = overlap_percentage(vut_poly, tgt_poly)
+        if ov > best_overlap:
+            best_overlap = ov
+
+    return best_overlap
+
+
 def lateral_offset_percentage(vut: VehicleState, target: VehicleState) -> float:
     """
     Static lateral overlap - used for purely stationary checks like CCRs initial positioning.

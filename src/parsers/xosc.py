@@ -184,20 +184,24 @@ def get_actors_ordered(root: Any) -> list[str]:
     return seen
 
 
-def get_entity_catalog_filepaths(root: Any) -> dict[str, str]:
+def get_entity_catalog_filepaths(root: Any) -> dict[str, tuple[str, str]]:
     """
-    Returns {entity_name: catalog_filepath} from CatalogReference or Properties filepath.
-    Used to verify assets are in the NCAP Asset folder (CH_SC_22).
+    Returns {entity_name: (path_or_ref, source_type)} for all ScenarioObjects.
+
+    source_type is "model3d" when the path comes from a Properties/Property element
+    (inline asset reference), or "catalog" when it comes from a CatalogReference element.
+    Used by CH_SC_22 to verify assets are in the NCAP Asset folder and to distinguish
+    inline model paths from OpenSCENARIO catalog lookups.
     """
-    result: dict[str, str] = {}
-    # Try Properties > Property filepath
+    result: dict[str, tuple[str, str]] = {}
+    # Try Properties > Property filepath/model3d first (most common in RR exports)
     for obj in xpath(root, "//ScenarioObject"):
         name = obj.get("name", "")
         for prop in obj.xpath(".//Properties/Property"):
             if prop.get("name", "").lower() in ("filepath", "model3d", "model", "resource"):
-                result[name] = prop.get("value", "")
+                result[name] = (prop.get("value", ""), "model3d")
                 break
-    # Try CatalogReference
+    # Try CatalogReference (OpenSCENARIO catalog lookup)
     for obj in xpath(root, "//ScenarioObject"):
         name = obj.get("name", "")
         if name in result:
@@ -206,7 +210,7 @@ def get_entity_catalog_filepaths(root: Any) -> dict[str, str]:
             catalog = cat_ref.get("catalogName", "")
             entry = cat_ref.get("entryName", "")
             if catalog or entry:
-                result[name] = f"{catalog}/{entry}"
+                result[name] = (f"{catalog}/{entry}", "catalog")
     return result
 
 
@@ -335,15 +339,25 @@ def get_polyline_part2_radius(
     min_heading_delta_rad: float = 0.01,
     min_segment_length_m: float = 0.01,
     part2_window_factor: float = 1.2,
+    handedness: str = "LHT",
 ) -> tuple[float | None, str]:
     """Estimate the Part 2 (constant-radius arc) radius of a turning trajectory.
 
     The Clothoid-Arc-Clothoid path (Part1-Part2-Part3) has its smallest radius in
     Part 2. Filtering to radii within part2_window_factor × minimum isolates the
     constant arc and excludes the transition clothoid sections which have large
-    apparent radii. Returns (radius_m, direction) where direction is "Farside"
-    (positive heading change = left turn) or "Nearside" (negative = right turn).
+    apparent radii.
+
+    Returns (radius_m, direction) where direction is "Farside" or "Nearside".
     Returns (None, "") when the trajectory has no clear curved section.
+
+    Handedness convention (EuroNCAP Frontal v1.1 + ISO 8855):
+      LHT (left-hand traffic, drive on left — UK/Japan/India, EuroNCAP default):
+        positive net heading change (CCW, left turn) = Farside (away from driver)
+        negative net heading change (CW, right turn) = Nearside (towards driver)
+      RHT (right-hand traffic, drive on right — US/mainland Europe):
+        positive net heading change = Nearside (left turn goes to driver's near side)
+        negative net heading change = Farside
     """
     import math
     radii = get_polyline_curvature_radii(root, entity_name, min_heading_delta_rad, min_segment_length_m)
@@ -372,7 +386,10 @@ def get_polyline_part2_radius(
         if abs(dh) > min_heading_delta_rad and dl > min_segment_length_m:
             net_dh += dh
 
-    direction = "Farside" if net_dh > 0 else "Nearside"
+    if handedness == "LHT":
+        direction = "Farside" if net_dh > 0 else "Nearside"
+    else:  # RHT
+        direction = "Nearside" if net_dh > 0 else "Farside"
     return round(est_radius, 2), direction
 
 

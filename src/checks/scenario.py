@@ -339,6 +339,7 @@ def check_sc_07(xosc_root: Any, config: Config) -> CheckResult:
         xosc_root, vut,
         min_heading_delta_rad=config.curvature_min_heading_delta_rad,
         min_segment_length_m=config.curvature_min_segment_length_m,
+        handedness=config.traffic_handedness,
     )
     if est_radius is None:
         return _make("CH_SC_07", "NA", "VUT heading is constant — not a turning scenario")
@@ -736,35 +737,40 @@ def _get_impact_percentage(
 
 
 def check_sc_16(xosc_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
-    """Impact % for turning/crossing ≈ protocol value (±5%)."""
+    """Impact % for turning/crossing ≈ protocol value (±5%).
+
+    USP: for parametric/non-kinematic scenarios the validator computes the bounding-box
+    overlap from Init positions + constant-speed projection and compares it to the protocol
+    table — no other tool does this from raw .xosc export. For RoadRunner kinematic format
+    the Init positions are ~700m from the impact point (pre-approach phase), so projection
+    gives 0%; the check falls back to MANUAL_REVIEW with the expected value.
+    """
     tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
     proto = config.scenario_protocol(tag) if tag else None
 
     if not proto or proto.type not in ("crossing",):
         return _make("CH_SC_16", "NA", "Not a turning/crossing scenario")
 
-    # RoadRunner kinematic format: actors follow a trajectory; start positions are
-    # hundreds of metres from the impact point and computing overlap there gives 0%.
-    # The actual impact geometry is embedded in the trajectory and can only be
-    # verified visually or in the HIL test.
+    expected = proto.impact_overlap_pct
+    tolerance = config.impact_tolerance_pct
     vut = _identify_vut(xosc_root, config)
+
     if vut and xosc.has_init_follow_trajectory(xosc_root, vut):
-        expected = proto.impact_overlap_pct
+        # RoadRunner kinematic format: actors start ~700m from impact; constant-speed
+        # bounding-box projection from Init cannot reconstruct collision geometry.
+        # Verify the impact location in RoadRunner or during HIL testing.
         return _make(
             "CH_SC_16",
             "MANUAL_REVIEW",
-            f"Scenario uses RoadRunner kinematic trajectory — impact overlap cannot be computed "
-            f"from Init positions. Expected ~{expected}% ±{config.impact_tolerance_pct}% "
-            f"(per the scenario's protocol; the scenario filename encodes the target, e.g. '50Imp'). "
-            f"Verify in RoadRunner or HIL test.",
+            f"Kinematic trajectory (RoadRunner format) — impact overlap cannot be computed "
+            f"from Init positions. Expected ~{expected}% ±{tolerance}% per protocol. "
+            f"Verify the impact location in RoadRunner or HIL test.",
         )
 
     pct, msg = _get_impact_percentage(xosc_root, config, proto.type)
     if pct is None:
         return _make("CH_SC_16", "MANUAL_REVIEW", msg)
 
-    expected = proto.impact_overlap_pct
-    tolerance = config.impact_tolerance_pct
     if abs(pct - expected) <= tolerance:
         return _make(
             "CH_SC_16",
@@ -775,38 +781,40 @@ def check_sc_16(xosc_root: Any, config: Config, scenario_tag: str | None = None)
     return _make(
         "CH_SC_16",
         "FAIL",
-        f"Impact overlap = {pct:.1f}% - expected {expected}% ±{tolerance}%. {msg}",
+        f"Impact overlap = {pct:.1f}% — expected {expected}% ±{tolerance}%. {msg}",
     )
 
 
 def check_sc_17(xosc_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
-    """Impact % for longitudinal must exactly match protocol value."""
+    """Impact % for longitudinal must exactly match protocol value (±1%).
+
+    USP: same bounding-box overlap computation as CH_SC_16 but for same-direction
+    longitudinal scenarios with ±1% tolerance. Falls back to MANUAL_REVIEW for
+    RoadRunner kinematic format (see check_sc_16 docstring).
+    """
     tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
     proto = config.scenario_protocol(tag) if tag else None
 
     if not proto or proto.type != "longitudinal":
         return _make("CH_SC_17", "NA", "Not a longitudinal scenario")
 
-    # RoadRunner kinematic format: same limitation as CH_SC_16 — start positions
-    # are far from impact point; overlap computation from Init gives meaningless 0%.
+    expected = proto.impact_overlap_pct
+    tolerance = config.longitudinal_impact_tolerance_pct
     vut = _identify_vut(xosc_root, config)
+
     if vut and xosc.has_init_follow_trajectory(xosc_root, vut):
-        expected = proto.impact_overlap_pct
         return _make(
             "CH_SC_17",
             "MANUAL_REVIEW",
-            f"Scenario uses RoadRunner kinematic trajectory — longitudinal impact overlap cannot "
-            f"be computed from Init positions. Expected ~{expected}% "
-            f"(±{config.longitudinal_impact_tolerance_pct}%, per the scenario's protocol; the "
-            f"filename encodes the target, e.g. '50Imp'). Verify in RoadRunner or HIL test.",
+            f"Kinematic trajectory (RoadRunner format) — longitudinal impact overlap cannot be "
+            f"computed from Init positions. Expected ~{expected}% ±{tolerance}% per protocol. "
+            f"Verify in RoadRunner or HIL test.",
         )
 
     pct, msg = _get_impact_percentage(xosc_root, config, proto.type)
     if pct is None:
         return _make("CH_SC_17", "MANUAL_REVIEW", msg)
 
-    expected = proto.impact_overlap_pct
-    tolerance = config.longitudinal_impact_tolerance_pct
     if abs(pct - expected) <= tolerance:
         return _make(
             "CH_SC_17",
@@ -816,7 +824,7 @@ def check_sc_17(xosc_root: Any, config: Config, scenario_tag: str | None = None)
     return _make(
         "CH_SC_17",
         "FAIL",
-        f"Longitudinal impact overlap = {pct:.1f}% - expected {expected}% (±{tolerance}% tolerance). {msg}",
+        f"Longitudinal impact overlap = {pct:.1f}% — expected {expected}% (±{tolerance}% tolerance). {msg}",
     )
 
 
@@ -917,11 +925,13 @@ def check_sc_20(xosc_root: Any, config: Config) -> CheckResult:
     vut = _identify_vut(xosc_root, config)
     inferred_direction = ""
     if vut and xosc.has_init_follow_trajectory(xosc_root, vut):
-        _, direction = xosc.get_polyline_part2_radius(xosc_root, vut)
+        _, direction = xosc.get_polyline_part2_radius(
+            xosc_root, vut, handedness=config.traffic_handedness
+        )
         if direction:
             inferred_direction = (
                 f" Inferred VUT turn direction from trajectory: {direction} "
-                f"(positive heading change = Farside/left, negative = Nearside/right). "
+                f"(traffic_handedness={config.traffic_handedness}; in LHT positive heading = Farside/left). "
                 f"Verify the EBT/EPT direction (Same/Opposite) matches the scenario intent."
             )
 
@@ -970,15 +980,17 @@ def check_sc_21(xosc_root: Any, config: Config) -> CheckResult:
 def check_sc_22(xosc_root: Any, config: Config) -> CheckResult:
     """
     All obstructions placed in NCAP Asset folder.
-    VUT is excluded - it is an OEM custom model and is not expected to live in the NCAP Asset folder.
+    VUT is excluded — it is an OEM custom model not expected in the NCAP Asset folder.
+    Accepts both inline model3d properties and OpenSCENARIO CatalogReference elements;
+    for CatalogReference, the catalogName must contain 'ncap' or 'asset'.
     """
-    filepaths = xosc.get_entity_catalog_filepaths(xosc_root)
+    entity_sources = xosc.get_entity_catalog_filepaths(xosc_root)
     vut = _identify_vut(xosc_root, config)
 
-    # Remove VUT from the check - only targets and static obstructions are required to use NCAP assets
-    non_vut_paths = {name: path for name, path in filepaths.items() if name != vut}
+    # Remove VUT — only targets and static obstructions are required to use NCAP assets
+    non_vut = {name: (path, src) for name, (path, src) in entity_sources.items() if name != vut}
 
-    if not non_vut_paths:
+    if not non_vut:
         return _make(
             "CH_SC_22",
             "MANUAL_REVIEW",
@@ -988,14 +1000,17 @@ def check_sc_22(xosc_root: Any, config: Config) -> CheckResult:
 
     wrong: list[str] = []
     param_refs: list[str] = []
-    for entity_name, path in non_vut_paths.items():
+    ok_items: list[str] = []
+
+    for entity_name, (path, src) in non_vut.items():
         if not path:
             continue
         if path.startswith("$") or path.startswith("%"):
-            # Parameterized path - can't verify at parse time (e.g. $Target_catalogName/$Target_catalogEntry)
-            param_refs.append(f"'{entity_name}'")
+            param_refs.append(f"'{entity_name}' ({src}: {path})")
         elif "ncap" not in path.lower() and "asset" not in path.lower():
-            wrong.append(f"'{entity_name}' → '{path}'")
+            wrong.append(f"'{entity_name}' [{src}] → '{path}'")
+        else:
+            ok_items.append(f"'{entity_name}' [{src}]")
 
     if wrong:
         msg = (
@@ -1003,21 +1018,22 @@ def check_sc_22(xosc_root: Any, config: Config) -> CheckResult:
             "Move these to the NCAP Asset folder in RoadRunner and re-export."
         )
         if param_refs:
-            msg += f" Also verify parameter-referenced paths manually: {'; '.join(param_refs)}."
+            msg += f" Also verify parameterized refs manually: {'; '.join(param_refs)}."
         return _make("CH_SC_22", "FAIL", msg)
 
     if param_refs:
         return _make(
             "CH_SC_22",
             "MANUAL_REVIEW",
-            f"Asset path(s) are parameter references - cannot verify at parse time: {'; '.join(param_refs)}. "
+            f"Asset reference(s) are parameterized — cannot verify at parse time: {'; '.join(param_refs)}. "
             "Confirm they resolve to the NCAP Asset folder in RoadRunner.",
         )
 
+    ok_note = f" ({', '.join(ok_items)})" if ok_items else ""
     return _make(
         "CH_SC_22",
         "PASS",
-        f"All {len(non_vut_paths)} non-VUT asset path(s) reference NCAP/asset folder",
+        f"All {len(non_vut)} non-VUT asset reference(s) use NCAP/asset folder{ok_note}.",
     )
 
 

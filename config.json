@@ -57,6 +57,8 @@
     {"vut_speed_max_kmh": 25,  "direction": "Farside",  "radius_m": 14.75}
   ],
   "curve_radius_tolerance_pct": 20.0,
+  "traffic_handedness": "LHT",
+  "optional_standalone_files": ["VehicleCatalog.xosc", "PedestrianCatalog.xosc"],
   "_ASSUMPTIONS_TO_VERIFY": [
     "These values were inferred by tooling. Verify against EuroNCAP protocol before treating as definitive:",
     "scenarios.*.type (longitudinal/crossing/head-on) - inferred from scenario name; confirm each scenario type is correct.",

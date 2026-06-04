@@ -774,6 +774,109 @@ class TestNegativeChecks:
             f"Road starting at x=598 should FAIL (not at origin). Got {result.status}: {result.comment}"
         )
 
+    def test_sc_22_catalog_reference_ncap_passes(self, config):
+        """CatalogReference with NCAP catalog name should PASS CH_SC_22."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <Entities>
+            <ScenarioObject name="VUT">
+              <Vehicle name="VUT" vehicleCategory="car">
+                <Properties><Property name="model3d" value="Vehicles/MyCar.rrvehicle"/></Properties>
+              </Vehicle>
+            </ScenarioObject>
+            <ScenarioObject name="EPTc">
+              <Pedestrian name="EPTc" model="adult">
+                <CatalogReference catalogName="NCAP Assets/PedestrianCatalog" entryName="adult_pedestrian"/>
+              </Pedestrian>
+            </ScenarioObject>
+          </Entities>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_22
+        result = check_sc_22(root, config)
+        assert result.status == "PASS", f"NCAP catalogName should PASS. Got: {result.comment}"
+        assert "[catalog]" in result.comment
+
+    def test_sc_22_catalog_reference_non_ncap_fails(self, config):
+        """CatalogReference with non-NCAP catalog name should FAIL CH_SC_22."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <Entities>
+            <ScenarioObject name="VUT">
+              <Vehicle name="VUT" vehicleCategory="car">
+                <Properties><Property name="model3d" value="Vehicles/MyCar.rrvehicle"/></Properties>
+              </Vehicle>
+            </ScenarioObject>
+            <ScenarioObject name="GVT">
+              <Vehicle name="GVT" vehicleCategory="car">
+                <CatalogReference catalogName="CustomLib" entryName="sedan"/>
+              </Vehicle>
+            </ScenarioObject>
+          </Entities>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_22
+        result = check_sc_22(root, config)
+        assert result.status == "FAIL", f"Non-NCAP catalog should FAIL. Got: {result.comment}"
+        assert "CustomLib" in result.comment
+
+    def test_sc_07_rht_handedness_inverts_direction(self, config):
+        """Positive net heading change maps to Nearside in RHT (opposite to LHT)."""
+        from src.parsers import xosc as xosc_parser
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <Entities>
+            <ScenarioObject name="VUT"><Vehicle name="VUT"/></ScenarioObject>
+          </Entities>
+          <Storyboard>
+            <Init>
+              <Actions>
+                <Private entityRef="VUT">
+                  <PrivateAction>
+                    <RoutingAction>
+                      <FollowTrajectoryAction>
+                        <Trajectory name="t" closed="false">
+                          <Shape>
+                            <Polyline>
+                              <Vertex time="0.0"><Position><WorldPosition x="0" y="0" h="0.0"/></Position></Vertex>
+                              <Vertex time="1.0"><Position><WorldPosition x="8" y="0.5" h="0.1"/></Position></Vertex>
+                              <Vertex time="2.0"><Position><WorldPosition x="15" y="2.0" h="0.2"/></Position></Vertex>
+                              <Vertex time="3.0"><Position><WorldPosition x="20" y="4.5" h="0.35"/></Position></Vertex>
+                              <Vertex time="4.0"><Position><WorldPosition x="22" y="7.0" h="0.5"/></Position></Vertex>
+                            </Polyline>
+                          </Shape>
+                        </Trajectory>
+                      </FollowTrajectoryAction>
+                    </RoutingAction>
+                  </PrivateAction>
+                </Private>
+              </Actions>
+            </Init>
+          </Storyboard>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        _, direction_lht = xosc_parser.get_polyline_part2_radius(root, "VUT", handedness="LHT")
+        assert direction_lht == "Farside", f"LHT: positive dh should be Farside, got {direction_lht}"
+        _, direction_rht = xosc_parser.get_polyline_part2_radius(root, "VUT", handedness="RHT")
+        assert direction_rht == "Nearside", f"RHT: positive dh should be Nearside, got {direction_rht}"
+
+    def test_nm_03_optional_file_absent_still_passes(self, config, tmp_path):
+        """NM_03 must PASS even when optional catalog files are absent."""
+        # Create all required files (7 extensions + TA.xml)
+        base = "AEB_CCFhol_30VUT_50GVT_50Imp"
+        for ext in config.required_file_extensions:
+            (tmp_path / f"{base}{ext}").write_text("dummy")
+        for standalone in config.required_standalone_files:
+            (tmp_path / standalone).write_text("dummy")
+        # Do NOT create any of the optional_standalone_files (VehicleCatalog.xosc etc.)
+        from src.checks.naming import check_nm_03
+        result = check_nm_03(tmp_path, config)
+        assert result.status == "PASS", f"All required files present; optional absent should PASS. Got: {result.comment}"
+        if config.optional_standalone_files:
+            assert "not required" in result.comment or "Optional" in result.comment, (
+                "Comment should mention optional files status"
+            )
+
 
 # ============================================================
 # Geometry tests (no external files needed)

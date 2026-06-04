@@ -227,6 +227,12 @@ class Config(BaseModel):
     curve_part2_radii_m: list[dict] = []
     # Allowed deviation from the protocol Part 2 radius before a FAIL is issued (%).
     curve_radius_tolerance_pct: float = 20.0
+    # Traffic handedness used for far-side / near-side classification (CH_SC_07, CH_SC_20).
+    # "LHT" = drive on left (UK/Japan/India — EuroNCAP default per Frontal v1.1 + ISO 8855).
+    # "RHT" = drive on right (US/mainland Europe) — inverts Farside/Nearside assignment.
+    traffic_handedness: str = "LHT"
+    # Optional files reported by NM_03 — absent files do NOT cause FAIL.
+    optional_standalone_files: list[str] = []
 
     @classmethod
     def load(cls, path: Path | None = None) -> Config:

@@ -176,9 +176,19 @@ def check_nm_03(scenario_dir: Path, config: Config, skip_rd: bool = False) -> Ch
         if not (scenario_dir / standalone).exists():
             missing.append(standalone)
 
+    # Report optional files (presence/absence does not affect PASS/FAIL)
+    optional_files = getattr(config, "optional_standalone_files", [])
+    opt_present = [f for f in optional_files if (scenario_dir / f).exists()]
+    opt_absent = [f for f in optional_files if f not in opt_present]
+    opt_note = ""
+    if opt_present:
+        opt_note += f" Optional catalog file(s) present: {', '.join(opt_present)}."
+    if opt_absent:
+        opt_note += f" Optional catalog file(s) absent (not required): {', '.join(opt_absent)}."
+
     if not missing:
-        return _make("CH_NM_03", "PASS")
-    return _make("CH_NM_03", "FAIL", f"Missing files: {', '.join(missing)}")
+        return _make("CH_NM_03", "PASS", opt_note.strip())
+    return _make("CH_NM_03", "FAIL", f"Missing files: {', '.join(missing)}.{opt_note}")
 
 
 def check_nm_04(scenario_dir: Path, config: Config) -> CheckResult:
