@@ -188,24 +188,34 @@ def get_entity_catalog_filepaths(root: Any) -> dict[str, tuple[str, str]]:
     """
     Returns {entity_name: (path_or_ref, source_type)} for all ScenarioObjects.
 
-    source_type is "model3d" when the path comes from a Properties/Property element
-    (inline asset reference), or "catalog" when it comes from a CatalogReference element.
-    Used by CH_SC_22 to verify assets are in the NCAP Asset folder and to distinguish
-    inline model paths from OpenSCENARIO catalog lookups.
+    source_type is "model3d" when the path is an inline asset reference, or "catalog"
+    when it comes from a CatalogReference element. Used by CH_SC_22 to verify assets
+    are in the NCAP Asset folder.
+
+    RoadRunner exports model3d as a direct XML attribute on the entity element:
+      <Vehicle model3d="NCAP Assets/..." ...>
+    OpenSCENARIO also supports it via Properties/Property or CatalogReference.
+    All three forms are checked in priority order.
     """
     result: dict[str, tuple[str, str]] = {}
-    # Try Properties > Property filepath/model3d first (most common in RR exports)
     for obj in xpath(root, "//ScenarioObject"):
         name = obj.get("name", "")
+        # 1. Direct model3d attribute on Vehicle/Pedestrian/MiscObject (RoadRunner exports)
+        for entity in obj.xpath("./Vehicle | ./Pedestrian | ./MiscObject"):
+            m3d = entity.get("model3d")
+            if m3d:
+                result[name] = (m3d, "model3d")
+                break
+        if name in result:
+            continue
+        # 2. Properties > Property filepath/model3d (parametric OpenSCENARIO format)
         for prop in obj.xpath(".//Properties/Property"):
             if prop.get("name", "").lower() in ("filepath", "model3d", "model", "resource"):
                 result[name] = (prop.get("value", ""), "model3d")
                 break
-    # Try CatalogReference (OpenSCENARIO catalog lookup)
-    for obj in xpath(root, "//ScenarioObject"):
-        name = obj.get("name", "")
         if name in result:
             continue
+        # 3. CatalogReference (OpenSCENARIO catalog lookup)
         for cat_ref in obj.xpath(".//CatalogReference"):
             catalog = cat_ref.get("catalogName", "")
             entry = cat_ref.get("entryName", "")
