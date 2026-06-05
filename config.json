@@ -1,12 +1,11 @@
 {
   "_comment": "EuroNCAP protocol thresholds. Update these when protocols change - no code edits needed.",
   "_README": [
+    "FULL PLAIN-LANGUAGE GUIDE: see CONFIG_GUIDE.md (what every key means, which are protocol constants vs site settings, examples).",
+    "Prefer Excel? Edit config.xlsx instead and run with --config config.xlsx. Regenerate it after JSON changes: python tools/make_config_xlsx.py",
+    "Verify any edit without running a validation: python validator.py --check-config --config config.json",
     "Edit VALUES only - never the Python. Any key starting with '_' is documentation and is ignored by the loader.",
-    "Numbers (lane_width_m, junction_radius_m, expected_decel_ms2, speed_sanity_max_kmh, ...) - just change the value.",
-    "Add a NEW scenario type: add ONE entry under 'scenarios' keyed by its tag (e.g. 'CCRm' or 'CPNA-75'). Its tag is auto-registered for detection - you do NOT need to also edit naming_convention.valid_prefixes.",
-    "A scenario entry needs: type (longitudinal/crossing/head-on), optional vut_speed_range_kmh [min,max], optional target_speed_kmh, impact_overlap_pct, direction.",
-    "Accept a new actor name: add it to vut_entity_names (for the VUT) or encap_actor_names (for targets).",
-    "Add a vehicle/VRU size for the impact geometry: add an entry under vehicle_dimensions keyed by the entity name."
+    "Add a NEW scenario type: add ONE entry under 'scenarios' keyed by its tag - it is auto-registered for detection."
   ],
   "protocol_version": "AEB_CC_4.3.1 / AEB_VRU_4.5.1 / Frontal_2026_1.1",
   "lane_width_m": 3.5,
@@ -48,7 +47,6 @@
   "right_lane_offset_threshold_m": 0.1,
   "curvature_min_heading_delta_rad": 0.01,
   "curvature_min_segment_length_m": 0.01,
-  "curvature_outlier_factor": 2.5,
   "_curve_radii_comment": "Protocol Part 2 (constant-radius arc) values for CPTA/CCFtap/CMFtap/CBTA paths. Source: EuroNCAP Frontal Collisions v1.1 Table 1.2.4. Used by CH_SC_07 to PASS/FAIL instead of MANUAL_REVIEW when VUT speed and turn direction are known.",
   "curve_part2_radii_m": [
     {"vut_speed_max_kmh": 10,  "direction": "Nearside", "radius_m": 8.00},

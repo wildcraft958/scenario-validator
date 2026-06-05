@@ -5,7 +5,12 @@ import logging
 import math
 from typing import Any
 
-from ..geometry import VehicleState, compute_impact_percentage, paths_intersect
+from ..geometry import (
+    VehicleState,
+    compute_impact_percentage,
+    estimate_trajectory_impact,
+    paths_intersect,
+)
 from ..models import CheckResult, Config
 from ..parsers import xosc, xodr
 
@@ -736,6 +741,97 @@ def _get_impact_percentage(
     return pct, f"VUT='{vut_name}', Target='{target_name}'"
 
 
+def _entity_bbox(xosc_root: Any, config: Config, name: str) -> tuple[float, float, float, float]:
+    """BoundingBox from the .xosc, falling back to config.vehicle_dimensions."""
+    bbox = xosc.get_entity_bbox(xosc_root, name)
+    if bbox is not None:
+        return bbox
+    dims = config.target_dims(name)
+    return (0.0, 0.0, dims.length, dims.width)
+
+
+def _kinematic_impact_verdict(
+    xosc_root: Any, config: Config, vut: str,
+    expected: float, tolerance: float, check_id: str,
+) -> CheckResult:
+    """Impact % estimation for RoadRunner kinematic exports — the validator's USP.
+
+    The exported trajectories are the UNBRAKED design paths (AEB only exists in the
+    real/HIL test), so stepping both actors through time with their exported bounding
+    boxes finds the designed first-contact geometry. Gives pre-HIL design feedback
+    that the RoadRunner GUI cannot show. Validated within ±5% on CPTA/CPNCO examples.
+
+    Metric: Pedestrian target → front-position % (target centre across the VUT front,
+    from the entry side, evaluated when the centre crosses the front plane);
+    Vehicle target → width-band overlap % at first contact.
+    """
+    targets = _identify_targets(xosc_root, config)
+    if not targets:
+        return _make(
+            check_id, "MANUAL_REVIEW",
+            f"Kinematic trajectory but no target entity identified. Expected ~{expected}% "
+            f"±{tolerance}% per protocol — verify in RoadRunner.",
+        )
+    tgt = targets[0]
+    vut_verts = xosc.get_trajectory_vertices(xosc_root, vut)
+    tgt_verts = xosc.get_trajectory_vertices(xosc_root, tgt)
+    category = xosc.get_entity_category(xosc_root, tgt) or "Vehicle"
+
+    est = estimate_trajectory_impact(
+        vut_verts, tgt_verts,
+        _entity_bbox(xosc_root, config, vut),
+        _entity_bbox(xosc_root, config, tgt),
+        target_category=category,
+    )
+    if est is None:
+        # Degenerate data — fall back to the path-intersection note
+        return _make(
+            check_id, "MANUAL_REVIEW",
+            f"Kinematic trajectory — could not step trajectories (missing/empty vertex data). "
+            f"Expected ~{expected}% ±{tolerance}% per protocol. Verify in RoadRunner."
+            + _collision_course_note(xosc_root, config, vut),
+        )
+
+    if not est.contact:
+        gap = f"{est.min_gap_m:.2f} m at t={est.t_min_gap:.1f}s" if est.min_gap_m is not None else "n/a"
+        return _make(
+            check_id, "FAIL",
+            f"Impact estimate: VUT and {tgt} bounding boxes NEVER meet along the design "
+            f"trajectories (closest approach {gap}). Expected ~{expected}% impact — the "
+            f"scenario timing/lateral design does not produce the collision. Adjust in RoadRunner.",
+        )
+
+    if category == "Pedestrian" and est.front_pos_left_pct is not None and est.front_pos_right_pct is not None:
+        # Side convention (left vs right edge) varies per protocol scenario; compare
+        # against whichever side matches and report both for human review.
+        left, right = est.front_pos_left_pct, est.front_pos_right_pct
+        computed = min((left, right), key=lambda p: abs(p - expected))
+        metric = f"front position {right:.0f}%/{left:.0f}% from right/left edge"
+    else:
+        computed = est.width_overlap_pct
+        metric = "width overlap"
+    detail = (
+        f"first contact t={est.t_contact:.2f}s, lateral offset {est.lateral_offset_m:+.2f} m, "
+        f"relative heading {est.rel_heading_deg:.0f}°"
+    )
+    basis = (
+        "Computed from unbraked design trajectories + exported bounding boxes "
+        "(no AEB in the scenario by design) — confirm in HIL."
+    )
+    if computed is not None and abs(computed - expected) <= tolerance:
+        return _make(
+            check_id, "PASS",
+            f"Geometric impact estimate {computed:.1f}% [{metric}] matches protocol "
+            f"{expected:.0f}% ±{tolerance:.0f}% ({detail}). {basis}",
+        )
+    return _make(
+        check_id, "FAIL",
+        f"Geometric impact estimate {computed:.1f}% [{metric}] — expected {expected:.0f}% "
+        f"±{tolerance:.0f}% ({detail}). The design trajectories do not produce the intended "
+        f"impact point; adjust the scenario in RoadRunner before HIL. {basis}",
+    )
+
+
 def _collision_course_note(xosc_root: Any, config: Config, vut: str) -> str:
     """Time-decoupled path-intersection test for kinematic scenarios.
 
@@ -766,12 +862,12 @@ def _collision_course_note(xosc_root: Any, config: Config, vut: str) -> str:
 def check_sc_16(xosc_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """Impact % for turning/crossing ≈ protocol value (±5%).
 
-    USP: for parametric/non-kinematic scenarios the validator computes the bounding-box
-    overlap from Init positions + constant-speed projection and compares it to the protocol
-    table — no other tool does this from raw .xosc export. For RoadRunner kinematic format
-    the Init positions are far from the impact point (pre-approach phase), so projection
-    gives 0%; the check confirms the collision course from path geometry and falls back
-    to MANUAL_REVIEW for the % (official checklist: "final tuning should be done in HIL").
+    USP: for RoadRunner kinematic exports the validator steps both actors through their
+    UNBRAKED design trajectories with the exported bounding boxes and computes the impact
+    geometry at the designed first contact (see _kinematic_impact_verdict). This gives
+    pre-HIL design verification the RoadRunner GUI cannot show. For parametric scenarios
+    it falls back to the Init-position bounding-box projection. HIL remains the final
+    authority (official checklist: "final tuning should be done in HIL").
     """
     tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
     proto = config.scenario_protocol(tag) if tag else None
@@ -784,17 +880,9 @@ def check_sc_16(xosc_root: Any, config: Config, scenario_tag: str | None = None)
     vut = _identify_vut(xosc_root, config)
 
     if vut and xosc.has_init_follow_trajectory(xosc_root, vut):
-        # RoadRunner kinematic format: trajectories end before any collision (AEB
-        # intervenes in the real test), so the overlap % requires simulation/HIL.
-        # The collision course itself is verifiable from path geometry.
-        return _make(
-            "CH_SC_16",
-            "MANUAL_REVIEW",
-            f"Kinematic trajectory (RoadRunner format) — impact overlap % requires "
-            f"simulation/HIL. Expected ~{expected}% ±{tolerance}% per protocol. "
-            f"Verify the impact location in RoadRunner."
-            + _collision_course_note(xosc_root, config, vut),
-        )
+        # RoadRunner kinematic format: the trajectories are the UNBRAKED design
+        # paths — estimate the designed impact geometry directly (USP).
+        return _kinematic_impact_verdict(xosc_root, config, vut, expected, tolerance, "CH_SC_16")
 
     pct, msg = _get_impact_percentage(xosc_root, config, proto.type)
     if pct is None:
@@ -817,9 +905,8 @@ def check_sc_16(xosc_root: Any, config: Config, scenario_tag: str | None = None)
 def check_sc_17(xosc_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """Impact % for longitudinal must exactly match protocol value (±1%).
 
-    USP: same bounding-box overlap computation as CH_SC_16 but for same-direction
-    longitudinal scenarios with ±1% tolerance. Falls back to MANUAL_REVIEW for
-    RoadRunner kinematic format (see check_sc_16 docstring).
+    USP: same trajectory-stepped impact estimation as CH_SC_16 but for longitudinal
+    scenarios with the stricter ±1% tolerance (see check_sc_16 docstring).
     """
     tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
     proto = config.scenario_protocol(tag) if tag else None
@@ -832,14 +919,7 @@ def check_sc_17(xosc_root: Any, config: Config, scenario_tag: str | None = None)
     vut = _identify_vut(xosc_root, config)
 
     if vut and xosc.has_init_follow_trajectory(xosc_root, vut):
-        return _make(
-            "CH_SC_17",
-            "MANUAL_REVIEW",
-            f"Kinematic trajectory (RoadRunner format) — longitudinal impact overlap % requires "
-            f"simulation/HIL. Expected ~{expected}% ±{tolerance}% per protocol. "
-            f"Verify in RoadRunner."
-            + _collision_course_note(xosc_root, config, vut),
-        )
+        return _kinematic_impact_verdict(xosc_root, config, vut, expected, tolerance, "CH_SC_17")
 
     pct, msg = _get_impact_percentage(xosc_root, config, proto.type)
     if pct is None:

@@ -911,6 +911,122 @@ class TestNegativeChecks:
         assert paths_intersect(a, c) is None
         assert paths_intersect([], b) is None
 
+    def test_impact_estimate_headon_half_offset(self):
+        """Head-on with 0.9 m lateral offset between 1.8 m-wide cars → ~50% width overlap."""
+        from src.geometry import estimate_trajectory_impact
+        bbox = (0.0, 0.0, 4.5, 1.8)
+        # VUT eastbound at y=0, target westbound at y=0.9, closing at 20 m/s
+        vut = [{"time": t, "x": 0 + 10.0 * t, "y": 0.0, "h": 0.0} for t in range(0, 11)]
+        import math
+        tgt = [{"time": t, "x": 100 - 10.0 * t, "y": 0.9, "h": math.pi} for t in range(0, 11)]
+        est = estimate_trajectory_impact(vut, tgt, bbox, bbox, target_category="Vehicle")
+        assert est is not None and est.contact
+        assert abs(est.width_overlap_pct - 50.0) < 2.0, est
+        assert abs(est.rel_heading_deg - 180.0) < 1.0
+
+    def test_impact_estimate_headon_dead_centre(self):
+        """Dead-centre head-on → 100% overlap (the CCFhol/CCFhos design-flaw signature)."""
+        from src.geometry import estimate_trajectory_impact
+        import math
+        bbox = (0.0, 0.0, 4.5, 1.8)
+        vut = [{"time": t, "x": 10.0 * t, "y": 0.0, "h": 0.0} for t in range(0, 11)]
+        tgt = [{"time": t, "x": 100 - 10.0 * t, "y": 0.0, "h": math.pi} for t in range(0, 11)]
+        est = estimate_trajectory_impact(vut, tgt, bbox, bbox, target_category="Vehicle")
+        assert est is not None and est.contact
+        assert est.width_overlap_pct > 95.0, est
+
+    def test_impact_estimate_no_contact_reports_min_gap(self):
+        """Parallel same-direction paths never meet → contact=False with min gap."""
+        from src.geometry import estimate_trajectory_impact
+        bbox = (0.0, 0.0, 4.5, 1.8)
+        vut = [{"time": t, "x": 10.0 * t, "y": 0.0, "h": 0.0} for t in range(0, 11)]
+        tgt = [{"time": t, "x": 10.0 * t, "y": 5.0, "h": 0.0} for t in range(0, 11)]
+        est = estimate_trajectory_impact(vut, tgt, bbox, bbox, target_category="Vehicle")
+        assert est is not None and not est.contact
+        assert est.min_gap_m is not None and 2.0 < est.min_gap_m < 4.0, est
+
+    def test_impact_estimate_pedestrian_front_position(self):
+        """Pedestrian crossing timed to be 0.7 m off-centre when the VUT front arrives
+        → ~11% from one edge / ~89% from the other."""
+        from src.geometry import estimate_trajectory_impact
+        import math
+        vut_bbox = (0.0, 0.0, 4.5, 1.8)
+        ped_bbox = (0.0, 0.0, 0.5, 0.5)
+        vut = [{"time": t, "x": 10.0 * t, "y": 0.0, "h": 0.0} for t in range(0, 11)]
+        # Pedestrian walks +y, crossing x=52.95: VUT front (x+2.25) arrives there at t=5.07.
+        # Tune start so pedestrian centre is at y=-0.7 when crossing the front plane.
+        ped = [{"time": t, "x": 52.95, "y": -0.7 - 1.0 * (5.07 - t), "h": math.pi / 2} for t in range(0, 11)]
+        est = estimate_trajectory_impact(vut, ped, vut_bbox, ped_bbox, target_category="Pedestrian")
+        assert est is not None and est.contact, est
+        near_edge = min(est.front_pos_left_pct, est.front_pos_right_pct)
+        assert abs(near_edge - 11.0) < 5.0, est
+
+    def test_real_cpta_impact_estimate_passes(self, config):
+        """Real CPTA export: estimate ~8% vs expected 10% ±5 → PASS."""
+        import pathlib
+        xosc_path = pathlib.Path("examples/CPTA/AEB_CPTAno_10VUT_5EPTa_10Imp.xosc")
+        if not xosc_path.exists():
+            pytest.skip("CPTA example not present")
+        from src.parsers import xosc as xosc_parser
+        from src.checks.scenario import check_sc_16
+        root = xosc_parser.load(xosc_path)
+        result = check_sc_16(root, config, scenario_tag="CPTA")
+        assert result.status == "PASS", result.comment
+        assert "Geometric impact estimate" in result.comment
+
+    def test_config_friendly_error_on_broken_json(self, tmp_path):
+        """A trailing comma must produce a ConfigError naming the line, not a stack trace."""
+        from src.models import Config, ConfigError
+        bad = tmp_path / "broken.json"
+        bad.write_text('{\n  "lane_width_m": 3.5,\n}')
+        with pytest.raises(ConfigError) as exc:
+            Config.load(bad)
+        assert "line" in str(exc.value)
+        assert "trailing" in str(exc.value).lower() or "comma" in str(exc.value).lower()
+
+    def test_config_friendly_error_on_bad_type(self, tmp_path):
+        """A wrong value type must produce a ConfigError naming the key."""
+        import json as jsonlib
+        from src.models import Config, ConfigError
+        raw = jsonlib.loads((Path("config.json")).read_text())
+        raw["lane_width_m"] = "not-a-number"
+        bad = tmp_path / "badtype.json"
+        bad.write_text(jsonlib.dumps(raw))
+        with pytest.raises(ConfigError) as exc:
+            Config.load(bad)
+        assert "lane_width_m" in str(exc.value)
+
+    def test_excel_config_round_trips(self, tmp_path):
+        """config.xlsx generated from config.json must load to the identical Config."""
+        import sys as _sys
+        _sys.path.insert(0, str(Path("tools").resolve()))
+        import json as jsonlib
+        from make_config_xlsx import build_workbook
+        from src.models import Config
+        raw = jsonlib.loads(Path("config.json").read_text())
+        for key in [k for k in raw if k.startswith("_")]:
+            raw.pop(key)
+        out = tmp_path / "config.xlsx"
+        build_workbook(raw).save(out)
+        a = Config.load(Path("config.json")).model_dump()
+        b = Config.load(out).model_dump()
+        a["naming_convention"] = sorted(a["naming_convention"]["valid_prefixes"])
+        b["naming_convention"] = sorted(b["naming_convention"]["valid_prefixes"])
+        assert a == b
+
+    def test_real_ccfhol_impact_estimate_flags_dead_centre(self, config):
+        """Real CCFhol export collides dead-centre (100%) but protocol says 50% → FAIL."""
+        import pathlib
+        xosc_path = pathlib.Path("examples/CCFhol/AEB_CCFhol_30VUT_50GVT_50Imp.xosc")
+        if not xosc_path.exists():
+            pytest.skip("CCFhol example not present")
+        from src.parsers import xosc as xosc_parser
+        from src.checks.scenario import check_sc_16
+        root = xosc_parser.load(xosc_path)
+        result = check_sc_16(root, config, scenario_tag="CCFhol")
+        assert result.status == "FAIL", result.comment
+        assert "100.0%" in result.comment
+
     def test_nm_03_optional_file_absent_still_passes(self, config, tmp_path):
         """NM_03 must PASS even when optional catalog files are absent."""
         # Create all required files (7 extensions + TA.xml)

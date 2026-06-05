@@ -31,14 +31,51 @@ def _parse_args() -> argparse.Namespace:
         description="EuroNCAP RoadRunner Scenario Validator",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("scenario_dir", help="Path to the exported scenario directory")
+    parser.add_argument(
+        "scenario_dir", nargs="?", default=".",
+        help="Path to the exported scenario directory (not needed with --check-config)",
+    )
     parser.add_argument("--config", default=None, help="Path to config.json")
     parser.add_argument("--output", default=None, help="Output directory for reports")
     parser.add_argument("--template", default=None, help="Existing .xlsx template to populate")
     parser.add_argument("--csv", action="store_true", help="Also write CSV report")
     parser.add_argument("--no-rd", action="store_true", help="Skip Model Desk .rd checks")
     parser.add_argument("--quiet", action="store_true", help="Suppress console output")
+    parser.add_argument(
+        "--check-config", action="store_true",
+        help="Validate the config file, print a summary of effective settings, and exit",
+    )
     return parser.parse_args()
+
+
+def _check_config(config_path: Path | None) -> int:
+    """Load the config, print a plain-language summary, exit 0 on success / 1 on error."""
+    from src.models import Config, ConfigError
+
+    effective = config_path or (_SCRIPT_DIR / "config.json")
+    try:
+        config = Config.load(config_path)
+    except ConfigError as exc:
+        print(f"CONFIG ERROR in {effective}:\n{exc}", file=sys.stderr)
+        return 1
+    except FileNotFoundError:
+        print(f"CONFIG ERROR: '{effective}' does not exist", file=sys.stderr)
+        return 1
+
+    print(f"Config OK: {effective}")
+    print(f"  Protocol version     : {config.protocol_version}")
+    print(f"  Traffic handedness   : {config.traffic_handedness}")
+    print(f"  Scenarios defined    : {len(config.scenarios)} ({', '.join(sorted(config.scenarios))})")
+    print(f"  Scenario prefixes    : {', '.join(config.naming_convention.get('valid_prefixes', []))}")
+    print(f"  Required files       : {len(config.required_file_extensions)} extensions + "
+          f"{', '.join(config.required_standalone_files)}")
+    print(f"  Optional files       : {', '.join(config.optional_standalone_files) or '(none)'}")
+    print(f"  VUT entity names     : {', '.join(config.vut_entity_names)}")
+    print(f"  SOV entity names     : {', '.join(config.sov_entity_names)}")
+    print(f"  Vehicle dimensions   : {len(config.vehicle_dimensions)} entries")
+    print(f"  Sim-time speed bands : {len(config.simulation_time_by_speed_s)}")
+    print(f"  Part-2 radii entries : {len(config.curve_part2_radii_m)}")
+    return 0
 
 
 def _resolve_file(scenario_dir: Path, extension: str) -> Path | None:
@@ -334,13 +371,16 @@ def main() -> int:
         if not quiet:
             print(message, file=sys.stderr if error else sys.stdout)
 
-    if not scenario_dir.is_dir():
-        emit(f"ERROR: '{scenario_dir}' is not a directory", error=True)
-        return 1
-
     config_path = Path(args.config).resolve() if args.config else None
     if config_path and not config_path.is_file():
         emit(f"ERROR: config file '{config_path}' does not exist", error=True)
+        return 1
+
+    if args.check_config:
+        return _check_config(config_path)
+
+    if not scenario_dir.is_dir():
+        emit(f"ERROR: '{scenario_dir}' is not a directory", error=True)
         return 1
 
     template_path = Path(args.template).resolve() if args.template else None
@@ -363,6 +403,8 @@ def main() -> int:
     log.info("=" * 60)
     log.info("Start time: %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
+    from src.models import ConfigError
+
     try:
         results, stats = run_validation(
             scenario_dir,
@@ -371,6 +413,12 @@ def main() -> int:
             cli_command=" ".join(sys.argv),
             template_path=template_path,
         )
+    except ConfigError as exc:
+        # User-facing config problem — plain message, no stack trace.
+        log.error("Config error: %s", exc)
+        emit(f"CONFIG ERROR:\n{exc}", error=True)
+        log.info("Exit status: 1")
+        return 1
     except Exception as exc:
         log.exception("Validation failed before report generation: %s", exc)
         emit(f"ERROR: validation failed before report generation: {exc}", error=True)

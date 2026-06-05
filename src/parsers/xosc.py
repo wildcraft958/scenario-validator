@@ -64,6 +64,37 @@ def get_entity_name(entity: Any) -> str:
     return entity.get("name", "")
 
 
+def get_entity_bbox(root: Any, entity_name: str) -> tuple[float, float, float, float] | None:
+    """Returns (center_x, center_y, length, width) from the entity's BoundingBox, or None.
+
+    RoadRunner exports a BoundingBox per entity with Center x=0 y=0 — i.e. the
+    WorldPosition IS the bounding-box centre. Values are parsed defensively;
+    parameterized ($ref) values yield None.
+    """
+    for obj in xpath(root, "//ScenarioObject[@name=$name]", name=entity_name):
+        for bb in obj.xpath(".//BoundingBox"):
+            center = bb.xpath("Center")
+            dims = bb.xpath("Dimensions")
+            if not center or not dims:
+                continue
+            cx = _safe_float(center[0].get("x"))
+            cy = _safe_float(center[0].get("y"))
+            length = _safe_float(dims[0].get("length"))
+            width = _safe_float(dims[0].get("width"))
+            if length is not None and width is not None:
+                return (cx or 0.0, cy or 0.0, length, width)
+    return None
+
+
+def get_entity_category(root: Any, entity_name: str) -> str:
+    """Returns 'Vehicle', 'Pedestrian', 'MiscObject' or '' for a ScenarioObject."""
+    for obj in xpath(root, "//ScenarioObject[@name=$name]", name=entity_name):
+        for tag in ("Vehicle", "Pedestrian", "MiscObject"):
+            if obj.xpath(f"./{tag}"):
+                return tag
+    return ""
+
+
 def get_init_positions(root: Any) -> dict[str, dict[str, float]]:
     """Returns {entity_name: {x, y, z, h}} from Init section.
     Skips entities whose positions are parameter references.
