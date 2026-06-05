@@ -122,14 +122,15 @@ class TestRD02RoadSegments:
 # ============================================================
 
 class TestRD03JunctionRadius:
-    def test_real_cpnco_fails(self, config):
-        """Real CPNCO has 13-20m radii → FAIL."""
+    def test_real_cpnco_manual_review(self, config):
+        """Real CPNCO has 13-20m lane-centre radii — all consistent with an 8m kerb,
+        which RoadRunner does not export to .xodr → MANUAL_REVIEW (not FAIL)."""
         from src.checks.road import check_rd_03
-        from src.checks.naming import detect_scenario_tag
         root = _load(CPNCO_XODR)
         result = check_rd_03(root, config, scenario_tag="CPNCO")
-        assert result.status == "FAIL"
+        assert result.status == "MANUAL_REVIEW"
         assert "13" in result.comment or "20" in result.comment
+        assert "kerb" in result.comment.lower()
 
     def test_correct_radius_passes(self, config):
         """Setting arc curvature to 1/8 = 0.125 (8m radius) should pass."""
@@ -143,6 +144,18 @@ class TestRD03JunctionRadius:
                     arc.set("curvature", "0.125")  # 1/8 = 8m radius
         result = check_rd_03(root, config, scenario_tag="CPNCO")
         assert result.status == "PASS", result.comment
+
+    def test_too_tight_radius_fails(self, config):
+        """A connecting radius BELOW 8m means the kerb corner is tighter than spec → FAIL."""
+        from src.checks.road import check_rd_03
+        root = _copy(_load(CPNCO_XODR))
+        junc_roads = {c.get("connectingRoad") for c in root.xpath("//junction/connection")}
+        for road in root.xpath("//road"):
+            if road.get("id") in junc_roads:
+                for arc in road.xpath(".//planView/geometry/arc"):
+                    arc.set("curvature", "0.2")  # 1/0.2 = 5m radius < 8m spec
+        result = check_rd_03(root, config, scenario_tag="CPNCO")
+        assert result.status == "FAIL", result.comment
 
 
 # ============================================================

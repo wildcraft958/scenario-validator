@@ -221,6 +221,7 @@ def get_entity_catalog_filepaths(root: Any) -> dict[str, tuple[str, str]]:
             entry = cat_ref.get("entryName", "")
             if catalog or entry:
                 result[name] = (f"{catalog}/{entry}", "catalog")
+                break
     return result
 
 

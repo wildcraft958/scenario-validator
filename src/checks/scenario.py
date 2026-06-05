@@ -5,7 +5,7 @@ import logging
 import math
 from typing import Any
 
-from ..geometry import VehicleState, compute_impact_percentage
+from ..geometry import VehicleState, compute_impact_percentage, paths_intersect
 from ..models import CheckResult, Config
 from ..parsers import xosc, xodr
 
@@ -736,14 +736,42 @@ def _get_impact_percentage(
     return pct, f"VUT='{vut_name}', Target='{target_name}'"
 
 
+def _collision_course_note(xosc_root: Any, config: Config, vut: str) -> str:
+    """Time-decoupled path-intersection test for kinematic scenarios.
+
+    The overlap % is NOT derivable from kinematic exports (trajectories end before
+    any collision because AEB intervenes in the real test), but whether the two
+    designed PATHS intersect is pure geometry — automatable. Returns a note for
+    the MANUAL_REVIEW comment.
+    """
+    targets = _identify_targets(xosc_root, config)
+    if not targets:
+        return ""
+    vut_verts = xosc.get_trajectory_vertices(xosc_root, vut)
+    tgt_verts = xosc.get_trajectory_vertices(xosc_root, targets[0])
+    hit = paths_intersect(vut_verts, tgt_verts)
+    if hit:
+        return (
+            f" Collision course CONFIRMED: VUT and {targets[0]} paths intersect "
+            f"at ({hit[0]:.1f}, {hit[1]:.1f})."
+        )
+    if vut_verts and tgt_verts:
+        return (
+            f" WARNING: VUT and {targets[0]} paths do NOT geometrically intersect — "
+            f"verify the scenario layout."
+        )
+    return ""
+
+
 def check_sc_16(xosc_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """Impact % for turning/crossing ≈ protocol value (±5%).
 
     USP: for parametric/non-kinematic scenarios the validator computes the bounding-box
     overlap from Init positions + constant-speed projection and compares it to the protocol
     table — no other tool does this from raw .xosc export. For RoadRunner kinematic format
-    the Init positions are ~700m from the impact point (pre-approach phase), so projection
-    gives 0%; the check falls back to MANUAL_REVIEW with the expected value.
+    the Init positions are far from the impact point (pre-approach phase), so projection
+    gives 0%; the check confirms the collision course from path geometry and falls back
+    to MANUAL_REVIEW for the % (official checklist: "final tuning should be done in HIL").
     """
     tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
     proto = config.scenario_protocol(tag) if tag else None
@@ -756,15 +784,16 @@ def check_sc_16(xosc_root: Any, config: Config, scenario_tag: str | None = None)
     vut = _identify_vut(xosc_root, config)
 
     if vut and xosc.has_init_follow_trajectory(xosc_root, vut):
-        # RoadRunner kinematic format: actors start ~700m from impact; constant-speed
-        # bounding-box projection from Init cannot reconstruct collision geometry.
-        # Verify the impact location in RoadRunner or during HIL testing.
+        # RoadRunner kinematic format: trajectories end before any collision (AEB
+        # intervenes in the real test), so the overlap % requires simulation/HIL.
+        # The collision course itself is verifiable from path geometry.
         return _make(
             "CH_SC_16",
             "MANUAL_REVIEW",
-            f"Kinematic trajectory (RoadRunner format) — impact overlap cannot be computed "
-            f"from Init positions. Expected ~{expected}% ±{tolerance}% per protocol. "
-            f"Verify the impact location in RoadRunner or HIL test.",
+            f"Kinematic trajectory (RoadRunner format) — impact overlap % requires "
+            f"simulation/HIL. Expected ~{expected}% ±{tolerance}% per protocol. "
+            f"Verify the impact location in RoadRunner."
+            + _collision_course_note(xosc_root, config, vut),
         )
 
     pct, msg = _get_impact_percentage(xosc_root, config, proto.type)
@@ -806,9 +835,10 @@ def check_sc_17(xosc_root: Any, config: Config, scenario_tag: str | None = None)
         return _make(
             "CH_SC_17",
             "MANUAL_REVIEW",
-            f"Kinematic trajectory (RoadRunner format) — longitudinal impact overlap cannot be "
-            f"computed from Init positions. Expected ~{expected}% ±{tolerance}% per protocol. "
-            f"Verify in RoadRunner or HIL test.",
+            f"Kinematic trajectory (RoadRunner format) — longitudinal impact overlap % requires "
+            f"simulation/HIL. Expected ~{expected}% ±{tolerance}% per protocol. "
+            f"Verify in RoadRunner."
+            + _collision_course_note(xosc_root, config, vut),
         )
 
     pct, msg = _get_impact_percentage(xosc_root, config, proto.type)
@@ -977,15 +1007,20 @@ def check_sc_21(xosc_root: Any, config: Config) -> CheckResult:
     )
 
 
-def check_sc_22(xosc_root: Any, config: Config) -> CheckResult:
+def check_sc_22(xosc_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """
     All obstructions placed in NCAP Asset folder.
+
+    Official checklist wording: "All obstructions should be placed in NCAP Asset folder in RR".
     VUT is excluded — it is an OEM custom model not expected in the NCAP Asset folder.
+    SOV entities (config.sov_entity_names) are exempt: per checklist Prerequisites the SOV
+    "can either be a GVT or a real vehicle", so a non-NCAP path is protocol-legal.
     Accepts both inline model3d properties and OpenSCENARIO CatalogReference elements;
     for CatalogReference, the catalogName must contain 'ncap' or 'asset'.
     """
     entity_sources = xosc.get_entity_catalog_filepaths(xosc_root)
     vut = _identify_vut(xosc_root, config)
+    sov_names = {n.upper() for n in getattr(config, "sov_entity_names", ["SOV"])}
 
     # Remove VUT — only targets and static obstructions are required to use NCAP assets
     non_vut = {name: (path, src) for name, (path, src) in entity_sources.items() if name != vut}
@@ -1005,7 +1040,11 @@ def check_sc_22(xosc_root: Any, config: Config) -> CheckResult:
     for entity_name, (path, src) in non_vut.items():
         if not path:
             continue
-        if path.startswith("$") or path.startswith("%"):
+        if entity_name.upper() in sov_names:
+            ok_items.append(
+                f"'{entity_name}' [{src}] exempt — SOV may be GVT or real vehicle per protocol"
+            )
+        elif path.startswith("$") or path.startswith("%"):
             param_refs.append(f"'{entity_name}' ({src}: {path})")
         elif "ncap" not in path.lower() and "asset" not in path.lower():
             wrong.append(f"'{entity_name}' [{src}] → '{path}'")
@@ -1017,6 +1056,13 @@ def check_sc_22(xosc_root: Any, config: Config) -> CheckResult:
             f"Asset(s) not in NCAP Asset folder: {'; '.join(wrong)}. "
             "Move these to the NCAP Asset folder in RoadRunner and re-export."
         )
+        proto = config.scenario_protocol(scenario_tag) if scenario_tag else None
+        if proto and getattr(proto, "has_sov", False):
+            msg += (
+                f" This scenario includes an SOV: if one of these is the overtaken vehicle, "
+                f"rename it to one of {sorted(sov_names)} (see CH_NM_01) — "
+                f"the SOV is permitted to be a real vehicle per protocol."
+            )
         if param_refs:
             msg += f" Also verify parameterized refs manually: {'; '.join(param_refs)}."
         return _make("CH_SC_22", "FAIL", msg)
@@ -1060,5 +1106,5 @@ def run_all(xosc_root: Any, xodr_root: Any, config: Config, scenario_tag: str | 
         check_sc_19(xosc_root, config),
         check_sc_20(xosc_root, config),
         check_sc_21(xosc_root, config),
-        check_sc_22(xosc_root, config),
+        check_sc_22(xosc_root, config, scenario_tag=scenario_tag),
     ]

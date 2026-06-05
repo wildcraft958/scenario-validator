@@ -59,13 +59,15 @@
   "curve_radius_tolerance_pct": 20.0,
   "traffic_handedness": "LHT",
   "optional_standalone_files": ["VehicleCatalog.xosc", "PedestrianCatalog.xosc"],
+  "sov_entity_names": ["SOV", "SK_SUV"],
   "_ASSUMPTIONS_TO_VERIFY": [
     "These values were inferred by tooling. Verify against EuroNCAP protocol before treating as definitive:",
     "scenarios.*.type (longitudinal/crossing/head-on) - inferred from scenario name; confirm each scenario type is correct.",
     "scenarios.*.vut_speed_range_kmh - CONFIRMED from EuroNCAP RAG db (adas_workspace/data/index/encap.db): CCFhol/CCFhos [30,100], CCFtap [10,25], CPNCO [20,60], CPTA [10,60]. Outstanding: CCRs/CCRb/CCRm/CCCscp speed ranges not yet confirmed.",
     "scenarios.*.impact_overlap_pct - cross-checked against filename token (e.g. '50Imp', '10Imp'). CPTA corrected 50->10. Confirm protocol table values match.",
     "curve_part2_radii_m - CONFIRMED from EuroNCAP Frontal v1.1 Table 1.2.4: Nearside 10km/h=8m, Farside 10km/h=9m, 15km/h=11.75m, 20-25km/h=14.75m. Nearside radii for 15km/h and 20-25km/h not yet in table (add when available).",
-    "CONFIRMED values (do NOT change): junction radius 8m (CH_RD_03), leftmost road at (0,0,0) (CH_RD_04), sim time 100-150s (CH_SC_04), lane width 3.5m (CH_RD_01), decel -4m/s2 (CH_MR_02)."
+    "CONFIRMED values (do NOT change): junction radius 8m (CH_RD_03), leftmost road at (0,0,0) (CH_RD_04), sim time 100-150s (CH_SC_04), lane width 3.5m (CH_RD_01), decel -4m/s2 (CH_MR_02).",
+    "CONFIRMED by official Review_Checklist_V12 screenshots (2026-05-29): RR export Driving Side = Left (traffic_handedness LHT); export Catalog settings = None (catalog files optional in NM_03); simulation_time_by_speed_s 35/40/45 max 60 matches official VUT speed table; CH_SC_22 wording 'All obstructions should be placed in NCAP Asset folder in RR'; SOV definition 'can either be a GVT or a real vehicle' (sov_entity_names exemption)."
   ],
   "simulation_time_by_speed_s": [
     {"vut_speed_max_kmh": 50,  "min_s": 35, "max_s": 60},
@@ -126,7 +128,8 @@
       "type": "crossing",
       "vut_speed_range_kmh": [30, 100],
       "impact_overlap_pct": 50,
-      "direction": "crossing"
+      "direction": "crossing",
+      "has_sov": true
     },
     "CCCscp": {
       "type": "crossing",

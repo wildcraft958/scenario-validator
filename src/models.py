@@ -37,15 +37,6 @@ class CheckResult(BaseModel):
         status_map = {"PASS": "Yes", "FAIL": "No", "NA": "NA", "MANUAL_REVIEW": "Manual"}
         return status_map[self.status]  # type: ignore[return-value]
 
-    def as_row(self) -> tuple[str, str, str, str, str]:
-        return (
-            self.category,
-            self.check_id,
-            self.description,
-            self.result,
-            self.comment,
-        )
-
     def as_validation_row(self) -> list[str]:
         """Full row including Comment — for Excel only."""
         return [
@@ -159,6 +150,9 @@ class ScenarioProtocol(BaseModel):
     target_speed_kmh: float | None = None
     impact_overlap_pct: float = 50.0
     direction: str = "left-to-right"
+    # True when the scenario includes an SOV (overtaken vehicle) that the protocol
+    # permits to be "a GVT or a real vehicle" — drives the CH_SC_22 rename hint.
+    has_sov: bool = False
 
     @field_validator("vut_speed_range_kmh")
     @classmethod
@@ -233,6 +227,10 @@ class Config(BaseModel):
     traffic_handedness: str = "LHT"
     # Optional files reported by NM_03 — absent files do NOT cause FAIL.
     optional_standalone_files: list[str] = []
+    # Entity names exempt from the CH_SC_22 NCAP-folder rule. Per checklist Prerequisites,
+    # the SOV (vehicle overtaken by VUT in CCFhol) "can either be a GVT or a real vehicle",
+    # so a non-NCAP asset path is protocol-legal for it.
+    sov_entity_names: list[str] = ["SOV"]
 
     @classmethod
     def load(cls, path: Path | None = None) -> Config:

@@ -860,6 +860,57 @@ class TestNegativeChecks:
         _, direction_rht = xosc_parser.get_polyline_part2_radius(root, "VUT", handedness="RHT")
         assert direction_rht == "Nearside", f"RHT: positive dh should be Nearside, got {direction_rht}"
 
+    def test_sc_22_sov_exempt_from_ncap_folder(self, config):
+        """SOV may be 'a GVT or a real vehicle' per protocol — exempt from NCAP-folder rule."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <Entities>
+            <ScenarioObject name="VUT">
+              <Vehicle name="VUT" vehicleCategory="car" model3d="Vehicles/MyCar.rrvehicle"/>
+            </ScenarioObject>
+            <ScenarioObject name="GVT">
+              <Vehicle name="GVT" vehicleCategory="car" model3d="NCAP Assets/NCAP_GVT.rrvehicle"/>
+            </ScenarioObject>
+            <ScenarioObject name="SOV">
+              <Vehicle name="SOV" vehicleCategory="car" model3d="Vehicles/RealCar.rrvehicle"/>
+            </ScenarioObject>
+          </Entities>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.checks.scenario import check_sc_22
+        result = check_sc_22(root, config)
+        assert result.status == "PASS", f"SOV with real-vehicle path must be exempt. Got: {result.comment}"
+        assert "exempt" in result.comment
+
+    def test_catalog_filepaths_first_catalog_ref_wins(self, config):
+        """With multiple CatalogReference elements, the FIRST one must be returned."""
+        xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <OpenSCENARIO>
+          <Entities>
+            <ScenarioObject name="GVT">
+              <Vehicle name="GVT" vehicleCategory="car">
+                <CatalogReference catalogName="NCAP_Catalog" entryName="first"/>
+                <CatalogReference catalogName="OtherLib" entryName="second"/>
+              </Vehicle>
+            </ScenarioObject>
+          </Entities>
+        </OpenSCENARIO>"""
+        root = _parse_xml(xml)
+        from src.parsers import xosc as xosc_parser
+        result = xosc_parser.get_entity_catalog_filepaths(root)
+        assert result["GVT"] == ("NCAP_Catalog/first", "catalog"), result
+
+    def test_paths_intersect_geometry(self):
+        """Crossing polylines intersect; parallel ones do not."""
+        from src.geometry import paths_intersect
+        a = [{"x": 0, "y": 0}, {"x": 10, "y": 0}]
+        b = [{"x": 5, "y": -5}, {"x": 5, "y": 5}]
+        hit = paths_intersect(a, b)
+        assert hit is not None and abs(hit[0] - 5) < 1e-9 and abs(hit[1]) < 1e-9
+        c = [{"x": 0, "y": 1}, {"x": 10, "y": 1}]
+        assert paths_intersect(a, c) is None
+        assert paths_intersect([], b) is None
+
     def test_nm_03_optional_file_absent_still_passes(self, config, tmp_path):
         """NM_03 must PASS even when optional catalog files are absent."""
         # Create all required files (7 extensions + TA.xml)

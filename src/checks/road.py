@@ -80,7 +80,20 @@ def _is_junction_scenario(scenario_tag: str | None, config: Config) -> bool:
 
 
 def check_rd_03(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
-    """Junction curvature radius should be 8 m."""
+    """Junction curvature radius should be 8 m (kerb/corner radius).
+
+    The 8 m spec is the junction CORNER (kerb fillet) radius set in RoadRunner.
+    RoadRunner does NOT export that fillet to OpenDRIVE — the .xodr only contains
+    the auto-generated connecting roads, whose <arc> radii are lane-centre path
+    values (reference-line geometry), always LARGER than the kerb radius by the
+    lateral lane offsets. So from the .xodr alone the kerb radius can only be
+    bounded from below:
+      - any connecting radius < 8 m  → junction is tighter than spec → FAIL
+      - a connecting radius ≈ 8 m    → kerb-tangent arc present → PASS
+      - all radii > 8 m              → consistent with an 8 m kerb → MANUAL_REVIEW
+        (verify Corner Radius = 8 m in the RoadRunner scene; the VUT's driven
+        Part-2 radius is independently validated by CH_SC_07).
+    """
     if not xodr.has_junctions(root):
         return _make("CH_RD_03", "NA", "No junctions found - check not applicable")
     if not _is_junction_scenario(scenario_tag, config):
@@ -95,15 +108,33 @@ def check_rd_03(root: Any, config: Config, scenario_tag: str | None = None) -> C
 
     target = config.junction_radius_m
     tolerance = config.junction_radius_tolerance_m
-    bad = [r for r in radii if abs(r - target) > tolerance]
-    if bad:
+    rounded = sorted({round(r, 2) for r in radii})
+
+    too_small = [r for r in rounded if r < target - tolerance]
+    if too_small:
         return _make(
             "CH_RD_03",
             "FAIL",
-            f"Junction radii out of spec: {[round(r, 2) for r in bad]} "
-            f"(expected {target} ± {tolerance} m per EuroNCAP checklist 'junction curvature = 8 m').",
+            f"Connecting-road radii {too_small} are below the {target} m kerb radius spec — "
+            f"lane-centre paths are always wider than the kerb, so the junction corner is "
+            f"tighter than {target} m. Increase the Corner Radius in RoadRunner.",
         )
-    return _make("CH_RD_03", "PASS")
+
+    if any(abs(r - target) <= tolerance for r in rounded):
+        return _make(
+            "CH_RD_03",
+            "PASS",
+            f"Connecting-road arc radius ≈ {target} m found (radii: {rounded}).",
+        )
+
+    return _make(
+        "CH_RD_03",
+        "MANUAL_REVIEW",
+        f"Connecting-road arc radii {rounded} m are lane-centre values; RoadRunner does not "
+        f"export the kerb/corner radius to OpenDRIVE. All radii are consistent with a kerb "
+        f"radius ≥ {target} m — verify Corner Radius = {target} m in the RoadRunner scene. "
+        f"(VUT driven Part-2 turn radius is independently validated by CH_SC_07.)",
+    )
 
 
 def check_rd_04(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
