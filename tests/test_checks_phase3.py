@@ -197,3 +197,11 @@ class TestMR02DecelApplicability:
         root = _parse(_speed_action_xosc("GVT", "13.89", "2.0", "0"))
         result = check_mr_02(root, config)
         assert result.status == "FAIL", result.comment
+
+    def test_signed_decel_rate_passes(self, config):
+        """Some authoring tools export a signed -4.0 for a 4 m/s2 deceleration. The magnitude
+        matches the protocol rate, so it must PASS, not false-fail on abs(-4 - 4) = 8."""
+        from src.checks.model_review import check_mr_02
+        root = _parse(_speed_action_xosc("GVT", "20.0", "-4.0", "10.0"))
+        result = check_mr_02(root, config)
+        assert result.status == "PASS", result.comment

@@ -162,8 +162,10 @@ def check_mr_02(xosc_root: Any, config: Config) -> CheckResult:
                 f"'{name}': decel rate is parameterized"
                 + (f" (${action['param_name']})" if action["param_name"] else "")
             )
-        elif abs(rate - expected) > tolerance:
-            wrong.append(f"'{name}': {rate:.2f} m/s² (expected {expected} ±{tolerance})")
+        elif abs(abs(rate) - expected) > tolerance:
+            # Compare the MAGNITUDE: the OpenSCENARIO rate is a magnitude, but some authoring
+            # tools export a signed -4.0 for a deceleration; that must not false-fail.
+            wrong.append(f"'{name}': {abs(rate):.2f} m/s² (expected {expected} ±{tolerance})")
 
     if wrong:
         comment = f"Incorrect deceleration rate: {'; '.join(wrong)}."
@@ -179,7 +181,7 @@ def check_mr_02(xosc_root: Any, config: Config) -> CheckResult:
             f"Confirm the resolved value equals {expected} m/s².",
         )
 
-    passing = [f"'{a['entity_name']}': {a['rate_ms2']:.2f} m/s²" for a in target_actions]
+    passing = [f"'{a['entity_name']}': {abs(a['rate_ms2']):.2f} m/s²" for a in target_actions]
     return _make(
         "CH_MR_02",
         "PASS",
