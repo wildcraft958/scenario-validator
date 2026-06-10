@@ -24,12 +24,27 @@ def _make(check_id: str, status: CheckStatus, comment: str = "") -> CheckResult:
     )
 
 
+def _entity_current_speed_ms(xosc_root: Any, name: str) -> float | None:
+    """Best estimate of an entity's speed (m/s) before a story action: Init speed first,
+    else the kinematic trajectory cruise speed. Used to tell deceleration from acceleration."""
+    init = xosc.get_init_speed(xosc_root, name)
+    if init is not None:
+        return init
+    traj_kmh = xosc.get_trajectory_speed_kmh(xosc_root, name)
+    return traj_kmh / 3.6 if traj_kmh is not None else None
+
+
 def check_mr_01(xosc_root: Any, config: Config) -> CheckResult:
     """No garbage/incorrect speed values for the VUT and any asset.
 
     Checks explicit AbsoluteTargetSpeed values in Init and action phase, plus
     peak cruise speeds derived from kinematic trajectory vertices (RoadRunner format).
     A speed is flagged when it is negative or above config.speed_sanity_max_kmh.
+
+    Scope note: this is a GARBAGE/sanity filter (negative or implausibly high values), not a
+    protocol-range check. Whether a plausible speed is correct FOR THE SCENARIO (e.g. 90 km/h
+    in a turning scenario) is owned by CH_SC_18, which grades the VUT/target speeds against the
+    per-scenario range + the filename tokens - so a per-motion ceiling here would just duplicate it.
     """
     max_kmh = config.speed_sanity_max_kmh
     max_ms = max_kmh / 3.6
@@ -112,6 +127,29 @@ def check_mr_02(xosc_root: Any, config: Config) -> CheckResult:
             "NA",
             "Linear-rate decel found only on VUT - braking check only applies to GVT/EMT targets",
         )
+
+    # The -4 m/s2 rule applies only to genuine DECELERATIONS. A linear-rate SpeedAction can
+    # also be an ACCELERATION (e.g. the target speeding up in CPLA/CBLA), which is not a
+    # braking event and must not be force-checked against the braking rate. An action is a
+    # deceleration when it targets a full stop (target 0) or a speed below the actor's
+    # current speed - derived from the action, no per-scenario config needed.
+    braking_actions = []
+    for action in target_actions:
+        target = action.get("target_speed")
+        if target is not None and target > 0.001:
+            current = _entity_current_speed_ms(xosc_root, action["entity_name"])
+            if current is not None and target >= current - 1e-6:
+                continue  # acceleration or speed-hold -> not a braking action
+        braking_actions.append(action)
+
+    if not braking_actions:
+        return _make(
+            "CH_MR_02",
+            "NA",
+            "Linear-rate speed action(s) present but none reduce the target's speed "
+            "(target speed >= current) - this is acceleration/speed-hold, not braking",
+        )
+    target_actions = braking_actions
 
     wrong: list[str] = []
     manual: list[str] = []

@@ -646,7 +646,7 @@ def check_sc_14(xosc_root: Any, config: Config) -> CheckResult:
     return _make("CH_SC_14", "FAIL", "; ".join(r.comment for r in fails))
 
 
-def check_sc_15(xosc_root: Any, config: Config) -> CheckResult:
+def check_sc_15(xosc_root: Any, config: Config, parsed_name: Any = None) -> CheckResult:
     """Stationary targets (EMT, EPTa, EPTc, EBTa etc.): Initialize Speed = Absolute(0 m/s)."""
     entities = [xosc.get_entity_name(e) for e in xosc.get_entities(xosc_root)]
     vut = _identify_vut(xosc_root, config)
@@ -663,10 +663,22 @@ def check_sc_15(xosc_root: Any, config: Config) -> CheckResult:
     if not emt_candidates:
         return _make("CH_SC_15", "NA", "No stationary EuroNCAP targets (EMT/EPTa/EPTc/EBTa) detected")
 
+    # A target the filename DESIGNS to move (token speed > 0, e.g. '30EMT') is a moving actor
+    # even when it is parametric (no FollowTrajectoryAction) - it must not be force-checked for
+    # 0 m/s. This complements the trajectory heuristic so the design, not just the file shape,
+    # decides stationary-vs-moving.
+    designed_moving: set[str] = set()
+    if parsed_name is not None:
+        token_type = getattr(parsed_name, "target_type", None)
+        token_kmh = getattr(parsed_name, "target_speed_kmh", None)
+        if token_type and token_kmh and token_kmh > 0:
+            designed_moving = {e for e in emt_candidates if token_type.upper() in e.upper()}
+
     # Entities with a kinematic trajectory are actively moving in this scenario
     # (e.g. EPTa/EPTc in crossing scenarios). Skip them — they are correctly moving.
-    stationary = [e for e in emt_candidates if not xosc.has_init_follow_trajectory(xosc_root, e)]
-    moving_via_traj = [e for e in emt_candidates if xosc.has_init_follow_trajectory(xosc_root, e)]
+    moving = {e for e in emt_candidates if xosc.has_init_follow_trajectory(xosc_root, e)} | designed_moving
+    stationary = [e for e in emt_candidates if e not in moving]
+    moving_via_traj = sorted(moving)
 
     if not stationary and moving_via_traj:
         return _make(
@@ -1007,14 +1019,72 @@ def check_sc_17(
     )
 
 
+def _resolve_primary_target(xosc_root: Any, config: Config, target_type: str) -> str | None:
+    """The non-VUT, non-SOV entity that carries the filename target token in its name
+    (e.g. 'GVT', 'EPTc') - the scenario's primary target, distinct from an SOV or an
+    obstruction. Returns None when no entity matches."""
+    vut_upper = {n.upper() for n in config.vut_entity_names}
+    sov_upper = {n.upper() for n in config.sov_entity_names}
+    tt = target_type.upper()
+    for entity in xosc.get_entities(xosc_root):
+        name = xosc.get_entity_name(entity)
+        nu = name.upper()
+        if nu in vut_upper or nu in sov_upper:
+            continue
+        if tt in nu:
+            return name
+    return None
+
+
+def _entity_speed_kmh(xosc_root: Any, name: str) -> float | None:
+    """Measured speed (km/h) of an entity: trajectory cruise speed first (actual motion),
+    else the Init AbsoluteTargetSpeed. None when neither is present (parametric, unknown)."""
+    traj_kmh = xosc.get_trajectory_speed_kmh(xosc_root, name)
+    if traj_kmh is not None:
+        return traj_kmh
+    init = xosc.get_init_speed(xosc_root, name)
+    return init * 3.6 if init is not None else None
+
+
+def _target_speed_crosscheck(
+    xosc_root: Any, config: Config, parsed_name: Any
+) -> tuple[str | None, str | None]:
+    """Cross-check the .xosc primary-target speed against the filename target-speed token.
+
+    Returns (mismatch_msg, verified_msg). Both None when it cannot be evaluated (no parsed
+    filename, no target token/speed, target entity not found, or no measurable speed). The
+    designed target speed is encoded in the filename token (e.g. '5EPTa', '45GVT'), so this
+    needs no per-scenario config - it verifies the built scene matches its own design.
+    """
+    if parsed_name is None:
+        return None, None
+    target_type = getattr(parsed_name, "target_type", None)
+    token_kmh = getattr(parsed_name, "target_speed_kmh", None)
+    if not target_type or token_kmh is None:
+        return None, None
+    name = _resolve_primary_target(xosc_root, config, target_type)
+    if not name:
+        return None, None
+    measured = _entity_speed_kmh(xosc_root, name)
+    if measured is None:
+        return None, None
+    if abs(measured - token_kmh) > max(1.5, 0.05 * token_kmh):
+        return (
+            f"filename target token says {token_kmh} km/h {target_type} but the .xosc "
+            f"'{name}' speed is {measured:.1f} km/h - likely a naming mistake; verify."
+        ), None
+    return None, f"target '{name}' {measured:.1f} km/h matches the {token_kmh} km/h {target_type} token"
+
+
 def check_sc_18(
     xosc_root: Any, config: Config, scenario_tag: str | None = None,
     parsed_name: Any = None,
 ) -> CheckResult:
     """VUT speed and Target speed at impact must match scenario requirements.
 
-    Also cross-checks the filename VUT-speed token against the .xosc trajectory speed and
-    flags a mismatch (likely naming mistake) as MANUAL_REVIEW.
+    Cross-checks the filename VUT-speed token against the .xosc trajectory speed (a mismatch
+    is a likely naming mistake -> MANUAL_REVIEW), grades the VUT speed against the per-scenario
+    protocol range, and cross-checks the primary-target speed against the filename target token.
     """
     tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
     proto = config.scenario_protocol(tag) if tag else None
@@ -1060,22 +1130,31 @@ def check_sc_18(
                 f"{vut_speed_kmh:.1f} km/h ({speed_source}) - likely a naming mistake; verify.",
             )
 
+    target_mismatch, target_verified = _target_speed_crosscheck(xosc_root, config, parsed_name)
+
     if proto.vut_speed_range_kmh:
         lo, hi = proto.vut_speed_range_kmh
-        if lo <= vut_speed_kmh <= hi:
-            return _make(
-                "CH_SC_18",
-                "PASS",
-                f"VUT speed = {vut_speed_kmh:.1f} km/h in range [{lo}, {hi}] km/h for {tag} "
-                f"(source: {speed_source})",
+        if not (lo <= vut_speed_kmh <= hi):
+            comment = (
+                f"VUT speed = {vut_speed_kmh:.1f} km/h - outside protocol range [{lo}, {hi}] km/h "
+                f"for {tag} (source: {speed_source})"
             )
-        return _make(
-            "CH_SC_18",
-            "FAIL",
-            f"VUT speed = {vut_speed_kmh:.1f} km/h - outside protocol range [{lo}, {hi}] km/h for {tag} "
-            f"(source: {speed_source})",
-        )
+            if target_mismatch:
+                comment += f". Also: {target_mismatch}"
+            return _make("CH_SC_18", "FAIL", comment)
 
+        vut_msg = (
+            f"VUT speed = {vut_speed_kmh:.1f} km/h in range [{lo}, {hi}] km/h for {tag} "
+            f"(source: {speed_source})"
+        )
+        if target_mismatch:
+            return _make("CH_SC_18", "MANUAL_REVIEW", f"{vut_msg}, but {target_mismatch}")
+        suffix = f"; {target_verified}" if target_verified else ""
+        return _make("CH_SC_18", "PASS", vut_msg + suffix)
+
+    # No VUT range configured - still report a target-speed disagreement if one exists.
+    if target_mismatch:
+        return _make("CH_SC_18", "MANUAL_REVIEW", target_mismatch)
     return _make(
         "CH_SC_18",
         "MANUAL_REVIEW",
@@ -1269,7 +1348,7 @@ def run_all(
         check_sc_12(xosc_root, config),
         check_sc_13(xosc_root, config),
         check_sc_14(xosc_root, config),
-        check_sc_15(xosc_root, config),
+        check_sc_15(xosc_root, config, parsed_name=parsed_name),
         check_sc_16(xosc_root, config, scenario_tag=scenario_tag, designed_impact_pct=designed_impact_pct, parsed_name=parsed_name),
         check_sc_17(xosc_root, config, scenario_tag=scenario_tag, designed_impact_pct=designed_impact_pct, parsed_name=parsed_name),
         check_sc_18(xosc_root, config, scenario_tag=scenario_tag, parsed_name=parsed_name),
