@@ -189,6 +189,24 @@ def _canonical_base(scenario_dir: Path, config: Config) -> str | None:
 # CH_NM_01 - actor naming inside the .xosc
 # ---------------------------------------------------------------------------
 
+def _matches_actor_name(name_upper: str, allowed_upper: list[str]) -> bool:
+    """Word-boundary match of an actor name against the allowed registry.
+
+    A name matches an allowed token when it equals it exactly, or extends it only with
+    a non-alphabetic boundary - a digit ('Vehicle2') or separator ('EPTc_Trajectory').
+    A trailing letter ('VehicleX', 'VehicleTest') is a different, non-standard name and
+    does NOT match, which the old loose startswith() wrongly accepted.
+    """
+    for a in allowed_upper:
+        if name_upper == a:
+            return True
+        if name_upper.startswith(a):
+            nxt = name_upper[len(a):len(a) + 1]
+            if nxt and not nxt.isalpha():
+                return True
+    return False
+
+
 def check_nm_01(scenario_dir: Path, config: Config) -> CheckResult:
     """Actor names inside the .xosc must follow EuroNCAP naming convention."""
     from ..parsers import xosc as xosc_mod
@@ -220,7 +238,7 @@ def check_nm_01(scenario_dir: Path, config: Config) -> CheckResult:
             continue
         if not allowed_upper:
             continue
-        if not any(name_upper.startswith(a) for a in allowed_upper):
+        if not _matches_actor_name(name_upper, allowed_upper):
             wrong.append(name)
 
     if not vut_found:
@@ -314,7 +332,11 @@ def check_nm_02(scenario_dir: Path, config: Config) -> CheckResult:
 
 def _target_type_category_mismatch(scenario_dir: Path, config: Config, target_type: str | None) -> str | None:
     """Return a message if the filename target token disagrees with the .xosc target
-    entity category, else None (no .xosc / unknown token / category -> no opinion)."""
+    entity category, else None (no .xosc / unknown token / category -> no opinion).
+
+    `expected` is the SET of OSC categories that are protocol-correct for the token, so a
+    cyclist/motorcyclist exported by RoadRunner as <Vehicle> overlaps and is NOT flagged.
+    """
     expected = config.target_type_to_category.get(target_type or "")
     if not expected:
         return None
@@ -336,8 +358,11 @@ def _target_type_category_mismatch(scenario_dir: Path, config: Config, target_ty
         cat = xosc_mod.get_entity_category(root, name)
         if cat:
             cats.append(cat)
-    if cats and expected not in cats:
-        return f"filename target '{target_type}' implies a {expected} but the scene target(s) are {', '.join(sorted(set(cats)))}"
+    if cats and not (expected & set(cats)):
+        return (
+            f"filename target '{target_type}' implies a {'/'.join(sorted(expected))} but the "
+            f"scene target(s) are {', '.join(sorted(set(cats)))}"
+        )
     return None
 
 

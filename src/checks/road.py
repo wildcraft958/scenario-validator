@@ -56,11 +56,24 @@ def check_rd_01(root: Any, config: Config) -> CheckResult:
 
 
 def check_rd_02(root: Any, config: Config) -> CheckResult:
-    """Road must have >= 2 segments."""
+    """Road must have >= 2 connected segments (no 'blue dot' disconnected roads)."""
     count = xodr.get_road_count(root)
-    if count >= 2:
-        return _make("CH_RD_02", "PASS")
-    return _make("CH_RD_02", "FAIL", f"Only {count} road segment(s) found - need at least 2")
+    if count < 2:
+        return _make("CH_RD_02", "FAIL", f"Only {count} road segment(s) found - need at least 2")
+
+    # A raw count >= 2 can still hide a 'blue dot' road whose link references a
+    # missing junction/road - it never joins the network, so the second segment is
+    # not actually reachable. EuroNCAP needs both segments traversable.
+    disconnected = xodr.find_disconnected_roads(root)
+    if disconnected:
+        return _make(
+            "CH_RD_02",
+            "FAIL",
+            f"{count} road segment(s) found, but road(s) {sorted(disconnected)} have a missing "
+            f"link connection ('blue dot' problem) - they reference a junction/road that does "
+            f"not exist, so the network is not fully connected. Fix the road links in RoadRunner.",
+        )
+    return _make("CH_RD_02", "PASS")
 
 
 def _junction_geometry_applies(root: Any, config: Config) -> tuple[bool, str]:
@@ -174,22 +187,25 @@ def check_rd_05(root: Any, config: Config) -> CheckResult:
         return _make("CH_RD_05", "FAIL", "No road geometry data found")
 
     # Checklist: junction roads must be oriented along the VUT's direction of travel
-    # (road start = entry, road end = exit). Precise verification needs VUT-trajectory
-    # correlation; as a heuristic, at least one approach road should run along an axis the
-    # VUT can travel straight on (within 45 deg of an axis). RoadRunner authors axis-aligned
-    # roads, so a purely diagonal road network would indicate a misaligned junction.
-    headings = [p["hdg"] for p in positions]
-    aligned = any(
-        abs(h) < math.pi / 4 or abs(abs(h) - math.pi) < math.pi / 4
-        for h in headings
-    )
-    if aligned:
+    # (road start = entry, road end = exit). RoadRunner authors intersections axis-aligned,
+    # so every road should run along a cardinal axis (0/90/180/270 deg) within the configured
+    # tolerance. A diagonal road misaligns the VUT entry/exit and indicates a bad junction.
+    tol = config.cardinal_heading_tolerance_deg
+    off_axis: list[float] = []
+    for p in positions:
+        deg = math.degrees(p["hdg"]) % 90.0
+        dist_to_cardinal = min(deg, 90.0 - deg)
+        if dist_to_cardinal > tol:
+            off_axis.append(round(math.degrees(p["hdg"]) % 360.0, 1))
+
+    if not off_axis:
         return _make("CH_RD_05", "PASS")
     return _make(
         "CH_RD_05",
         "FAIL",
-        "Road headings suggest roads are not aligned with VUT travel direction. "
-        f"Headings (rad): {[round(h, 3) for h in headings]}",
+        f"Junction road heading(s) {sorted(set(off_axis))} deg are not aligned with a cardinal "
+        f"axis (0/90/180/270) within +/-{tol:.0f} deg - roads must run along the VUT's straight "
+        f"entry/exit directions. A diagonal junction misaligns VUT entry and exit.",
     )
 
 

@@ -325,12 +325,15 @@ class Config(BaseModel):
     # any code edit when the convention grows.
     allowed_programs: list[str] = ["AEB"]
     target_type_tokens: list[str] = []          # GVT / EPTa / EPTc / EBTa / EMT / ...
-    # Expected OpenSCENARIO entity category for each filename target token — lets CH_NM_02
-    # catch a mislabeled filename (e.g. "30GVT" on a scenario whose target is a pedestrian).
-    target_type_to_category: dict[str, str] = Field(default_factory=lambda: {
-        "GVT": "Vehicle", "SOV": "Vehicle",
-        "EPTa": "Pedestrian", "EPTc": "Pedestrian",
-        "EBTa": "Bicyclist", "EMT": "Motorcyclist",
+    # Acceptable OpenSCENARIO entity categories for each filename target token — lets
+    # CH_NM_02 catch a mislabeled filename (e.g. "30GVT" on a pedestrian-category target)
+    # WITHOUT false-flagging RoadRunner's export reality: it has no cyclist/motorcyclist
+    # OSC category, so EBTa/EMT legitimately export as <Vehicle>. Each token therefore maps
+    # to the SET of categories that are protocol-correct for it (overlap = no mismatch).
+    target_type_to_category: dict[str, set[str]] = Field(default_factory=lambda: {
+        "GVT": {"Vehicle"}, "SOV": {"Vehicle"},
+        "EPTa": {"Pedestrian"}, "EPTc": {"Pedestrian"},
+        "EBTa": {"Bicyclist", "Vehicle"}, "EMT": {"Motorcyclist", "Vehicle"},
     })
     vut_speed_suffix: str = "VUT"
     impact_suffix: str = "Imp"
