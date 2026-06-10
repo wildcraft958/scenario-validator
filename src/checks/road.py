@@ -30,24 +30,38 @@ def _make(check_id: str, status: CheckStatus, comment: str = "") -> CheckResult:
 
 
 def check_rd_01(root: Any, config: Config) -> CheckResult:
-    """Lane width should be 3.5 m, road markings present."""
-    widths = xodr.get_lane_widths(root)
-    if not widths:
+    """Lane width per EuroNCAP Frontal v1.1 Figure 4.2, road markings present.
+
+    Main approach lanes are lane_width_m (3.5 m). Junction side/connecting lanes may be
+    junction_lane_width_min_m..lane_width_m (3.25-3.5 m), so they are graded against the wider
+    band instead of being false-failed for a protocol-legal 3.25 m width.
+    """
+    main_w, junc_w = xodr.get_lane_widths_by_road_kind(root)
+    if not main_w and not junc_w:
         return _make("CH_RD_01", "FAIL", "No lane width elements found in .xodr")
 
-    tolerance = config.lane_width_tolerance_m
+    tol = config.lane_width_tolerance_m
     target = config.lane_width_m
-    bad = [w for w in widths if abs(w - target) > tolerance]
+    junc_min = config.junction_lane_width_min_m
+    bad_main = [w for w in main_w if abs(w - target) > tol]
+    bad_junc = [w for w in junc_w if not (junc_min - tol <= w <= target + tol)]
 
     markings = xodr.get_road_markings(root)
     has_markings = bool(markings) and any(m not in ("none", "") for m in markings)
 
-    if bad:
+    if bad_main or bad_junc:
+        parts = []
+        if bad_main:
+            parts.append(f"main-road lane(s) {[round(w, 3) for w in bad_main]} (expected {target} ± {tol} m)")
+        if bad_junc:
+            parts.append(
+                f"junction connecting-lane(s) {[round(w, 3) for w in bad_junc]} "
+                f"(expected {junc_min}-{target} m per Figure 4.2)"
+            )
         return _make(
             "CH_RD_01",
             "FAIL",
-            f"Lane widths out of spec: {[round(w, 3) for w in bad]} "
-            f"(expected {target} ± {tolerance} m). "
+            "Lane widths out of spec: " + "; ".join(parts) + ". "
             + ("" if has_markings else "Also: no road markings found."),
         )
     if not has_markings:

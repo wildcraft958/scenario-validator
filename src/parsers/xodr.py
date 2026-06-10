@@ -45,6 +45,31 @@ def get_lane_widths(root: Any) -> list[float]:
     return widths
 
 
+def get_lane_widths_by_road_kind(root: Any) -> tuple[list[float], list[float]]:
+    """Driving-lane width 'a' coefficients split into (main_road, junction_connecting_road).
+
+    Per EuroNCAP Frontal v1.1 Figure 4.2 the main approach lanes are 3.5 m while the junction
+    side/connecting lanes may be 3.25-3.5 m, so RD_01 grades the two against different bands.
+    Roads referenced as a junction <connection> connectingRoad are the connecting lanes; the
+    rest are main roads.
+    """
+    junction_roads: set[str] = set()
+    for conn in xpath(root, "//junction/connection"):
+        cr = conn.get("connectingRoad")
+        if cr:
+            junction_roads.add(cr)
+    main: list[float] = []
+    junc: list[float] = []
+    for road in xpath(root, "//road"):
+        target = junc if road.get("id") in junction_roads else main
+        for lane in road.xpath(".//laneSection//lane[@type='driving']"):
+            for w in lane.xpath("width"):
+                a = w.get("a")
+                if a is not None:
+                    target.append(float(a))
+    return main, junc
+
+
 def get_junction_ids(root: Any) -> list[str]:
     return [j.get("id", "") for j in xpath(root, "//junction")]
 

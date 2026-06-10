@@ -307,6 +307,11 @@ class Config(BaseModel):
     # (0/90/180/270 deg) to count as straight, axis-aligned travel. World direction itself
     # is NOT constrained - RoadRunner authors scenes in any orientation.
     cardinal_heading_tolerance_deg: float = 5.0
+    # CH_RD_01: minimum junction side/connecting-lane width (m). Per EuroNCAP Frontal v1.1
+    # Figure 4.2 the main approach lanes are lane_width_m (3.5 m) but the junction side lanes may
+    # be 3.25-3.5 m, so connecting-road lanes are graded against [junction_lane_width_min_m,
+    # lane_width_m] while main-road lanes stay at lane_width_m exactly.
+    junction_lane_width_min_m: float = 3.25
     # CH_SC_05: lateral offset (m) from road centre beyond which the lane side is decided.
     right_lane_offset_threshold_m: float = 0.1
     # CH_RD_04: how close the leftmost junction road's start must be to the RoadRunner

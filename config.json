@@ -10,6 +10,7 @@
   "protocol_version": "AEB_CC_4.3.1 / AEB_VRU_4.5.1 / Frontal_2026_1.1",
   "lane_width_m": 3.5,
   "lane_width_tolerance_m": 0.05,
+  "junction_lane_width_min_m": 3.25,
   "junction_radius_m": 8.0,
   "junction_radius_tolerance_m": 0.1,
   "simulation_time_min_s": 100,

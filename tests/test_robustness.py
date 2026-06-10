@@ -96,6 +96,31 @@ class TestRD01LaneWidth:
             rm.getparent().remove(rm)
         assert check_rd_01(root, config).status == "FAIL"
 
+    def test_junction_side_lane_325_passes(self, config):
+        """Per EuroNCAP Frontal v1.1 Figure 4.2 a junction connecting lane may be 3.25 m, so it
+        must PASS, not be false-failed against the 3.5 m main-lane width."""
+        from src.checks.road import check_rd_01
+        root = _copy(_load(CPNCO_XODR))
+        junc_roads = {c.get("connectingRoad") for c in root.xpath("//junction/connection")}
+        assert junc_roads, "fixture has no junction connecting roads"
+        for road in root.xpath("//road"):
+            if road.get("id") in junc_roads:
+                for w in road.xpath(".//laneSection//lane[@type='driving']/width"):
+                    w.set("a", "3.25")
+        result = check_rd_01(root, config)
+        assert result.status == "PASS", result.comment
+
+    def test_main_lane_325_fails(self, config):
+        """A 3.25 m width on a MAIN approach lane is out of spec (main lanes are 3.5 m) → FAIL."""
+        from src.checks.road import check_rd_01
+        root = _copy(_load(CPNCO_XODR))
+        junc_roads = {c.get("connectingRoad") for c in root.xpath("//junction/connection")}
+        for road in root.xpath("//road"):
+            if road.get("id") not in junc_roads:
+                for w in road.xpath(".//laneSection//lane[@type='driving']/width"):
+                    w.set("a", "3.25")
+        assert check_rd_01(root, config).status == "FAIL"
+
 
 # ============================================================
 # CH_RD_02: >= 2 road segments
