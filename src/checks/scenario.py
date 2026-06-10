@@ -291,6 +291,11 @@ def check_sc_07(xosc_root: Any, config: Config) -> CheckResult:
     Curvature path part 2: constant radius detected.
     Checks Clothoid elements first; falls back to polyline vertex heading analysis for
     RoadRunner kinematic exports which use Polyline instead of Clothoid.
+
+    Scope note: the protocol turn is a 3-segment clothoid-arc-clothoid with entry/exit angles
+    (alpha/beta, Frontal v1.1 Table 1.2.4). The validated, non-brittle check here is the Part-2
+    constant-arc radius against the protocol table; the RR polyline export does not expose the
+    clothoid transition parameters cleanly, so the entry/exit-angle check stays manual.
     """
     # --- Primary: Clothoid/ClothoidSpline (standard OSC) ---
     constant_segments: list[float] = []
@@ -414,7 +419,13 @@ def check_sc_08(xosc_root: Any, config: Config, scenario_tag: str | None = None)
 
 
 def check_sc_09(xosc_root: Any, config: Config) -> CheckResult:
-    """Static asset positions should be present in Init."""
+    """Static asset positions should be present in Init.
+
+    Scope note: this verifies the obstruction assets EXIST and are positioned. Whether an
+    obstruction actually OCCLUDES the VUT-to-target sightline at the relevant instant
+    (CPNCO/CBNAO/CMCscp line-of-sight) is time-dependent geometry that depends on the impact
+    point and approach; it remains a manual HIL verification rather than a brittle static test.
+    """
     positions = xosc.get_init_positions(xosc_root)
     all_entities = [xosc.get_entity_name(e) for e in xosc.get_entities(xosc_root)]
     vut = _identify_vut(xosc_root, config)
