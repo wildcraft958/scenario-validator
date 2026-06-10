@@ -564,9 +564,12 @@ class TestNM01ActorNaming:
         result = check_nm_01(tmp_path, config)
         assert result.status == "PASS", f"SOV should be a valid EuroNCAP actor: {result.comment}"
 
-    def test_sk_suv_fails(self, config, tmp_path):
-        """SK_SUV is not a valid EuroNCAP name — the real CCFhol actor is misnamed."""
+    def test_registered_sov_name_passes(self, config, tmp_path):
+        """SK_SUV is the CCFhol SOV; the team registers it in config.sov_entity_names. The
+        protocol permits the overtaken vehicle to be a real vehicle, so a registered SOV name
+        is legitimate and NM_01 must PASS (consistent with the CH_SC_22 SOV exemption)."""
         from src.checks.naming import check_nm_01
+        assert "SK_SUV" in {n.upper() for n in config.sov_entity_names}, "fixture expects SK_SUV registered"
         xosc_content = b"""<?xml version="1.0"?>
         <OpenSCENARIO>
           <FileHeader description="CCFhol_Test"/>
@@ -578,14 +581,33 @@ class TestNM01ActorNaming:
         </OpenSCENARIO>"""
         (tmp_path / "test.xosc").write_bytes(xosc_content)
         result = check_nm_01(tmp_path, config)
-        assert result.status == "FAIL"
-        assert "SK_SUV" in result.comment
+        assert result.status == "PASS", result.comment
 
-    def test_real_ccfhol_fails(self, config):
-        """CCFhol has SK_SUV → NM_01 should FAIL in real run too."""
+    def test_unregistered_nonstandard_name_fails(self, config, tmp_path):
+        """An actor name that is neither a EuroNCAP token nor a registered SOV is non-standard,
+        and NM_01 FAILs with a hint to register a real-vehicle SOV in config.sov_entity_names."""
+        from src.checks.naming import check_nm_01
+        unreg = "BadActorXYZ"
+        assert unreg.upper() not in {n.upper() for n in config.sov_entity_names}
+        xosc_content = f"""<?xml version="1.0"?>
+        <OpenSCENARIO>
+          <FileHeader description="CCFhol_Test"/>
+          <Entities>
+            <ScenarioObject name="VUT"><Vehicle name="VUT"/></ScenarioObject>
+            <ScenarioObject name="GVT"><Vehicle name="GVT"/></ScenarioObject>
+            <ScenarioObject name="{unreg}"><Vehicle name="{unreg}"/></ScenarioObject>
+          </Entities>
+        </OpenSCENARIO>""".encode()
+        (tmp_path / "test.xosc").write_bytes(xosc_content)
+        result = check_nm_01(tmp_path, config)
+        assert result.status == "FAIL"
+        assert unreg in result.comment and "sov_entity_names" in result.comment
+
+    def test_real_ccfhol_passes(self, config):
+        """CCFhol's SK_SUV is a registered SOV, so the real run now PASSES."""
         from src.checks.naming import check_nm_01
         result = check_nm_01(EXAMPLES / "CCFhol", config)
-        assert result.status == "FAIL"
+        assert result.status == "PASS", result.comment
 
 
 # ============================================================

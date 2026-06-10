@@ -226,6 +226,12 @@ def check_nm_01(scenario_dir: Path, config: Config) -> CheckResult:
 
     vut_names_upper = [n.upper() for n in config.vut_entity_names]
     allowed_upper = [n.upper() for n in config.encap_actor_names] if config.encap_actor_names else []
+    # A registered SOV is accepted: per the protocol the overtaken vehicle "can either be a GVT
+    # or a real vehicle", so a real-vehicle SOV name (e.g. SK_SUV) is legitimate once the team
+    # registers it in config.sov_entity_names. Match these EXACTLY (explicit full names, not
+    # EuroNCAP tokens). This keeps NM_01 consistent with the CH_SC_22 SOV exemption; an
+    # UNREGISTERED non-standard name still fails, with a hint to register it.
+    sov_names_upper = {n.upper() for n in getattr(config, "sov_entity_names", [])}
 
     vut_found = False
     wrong: list[str] = []
@@ -235,6 +241,8 @@ def check_nm_01(scenario_dir: Path, config: Config) -> CheckResult:
         name_upper = name.upper()
         if any(name_upper == v for v in vut_names_upper):
             vut_found = True
+            continue
+        if name_upper in sov_names_upper:
             continue
         if not allowed_upper:
             continue
@@ -254,7 +262,8 @@ def check_nm_01(scenario_dir: Path, config: Config) -> CheckResult:
             "FAIL",
             f"Non-standard actor name(s): {', '.join(wrong)}. "
             f"Use EuroNCAP standard names: GVT, EPTa, EBTa, EPTc, EMT, SOV, Vehicle2, "
-            f"LargeObstructionVehicle, SmallObstructionVehicle, etc.",
+            f"LargeObstructionVehicle, SmallObstructionVehicle, etc. If one is the overtaken "
+            f"SOV (the protocol permits a real vehicle), add its name to config.sov_entity_names.",
         )
     return _make("CH_NM_01", "PASS", f"All {len(entities)} actor(s) follow EuroNCAP naming convention")
 
