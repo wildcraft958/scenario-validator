@@ -58,7 +58,7 @@ _KEY_SHEET = {
     "macro_file_pattern": ("Site Settings", "Macro workbook name; {base} = scenario base name (CH_NM_03)."),
     "review_file_pattern": ("Site Settings", "Manual review checklist name; {base} = scenario base name (optional, being phased out)."),
     "required_associated_roles": ("Site Settings", "Which affix files are mandatory: functional, macro (review is optional)."),
-    "junction_scenario_prefixes": ("Site Settings", "Scenario families that require junction geometry checks (RD_03-06, SC_10)."),
+    "junction_intersection_min_spread_deg": ("Site Settings", "A junction counts as an intersection (RD_03-06, SC_10) when its incoming roads differ in heading by more than this (deg). Auto-detected from the .xodr - no scenario list."),
     "extra_scenario_prefixes": ("Site Settings", "Extra valid scenario name prefixes that have no row in the Scenarios sheet."),
     "junction_waypoint_radius_m": ("Site Settings", "How close to a junction a waypoint must be to count as 'at the junction'."),
     # tolerances / tuning
@@ -137,18 +137,16 @@ def build_workbook(raw: dict) -> Workbook:
 
     # ---- Scenarios ----
     ws = wb.create_sheet("Scenarios")
-    ws.append(["tag", "type", "vut_min_kmh", "vut_max_kmh", "target_speed_kmh",
-               "impact_overlap_pct", "direction", "has_sov"])
-    _style_header(ws, 8)
-    _autosize(ws, [12, 14, 12, 12, 16, 17, 16, 9])
+    ws.append(["tag", "type", "vut_min_kmh", "vut_max_kmh", "side_impact", "has_sov"])
+    _style_header(ws, 6)
+    _autosize(ws, [12, 14, 12, 12, 12, 9])
     dv_type = DataValidation(type="list", formula1='"longitudinal,crossing,head-on"', allow_blank=False)
     ws.add_data_validation(dv_type)
     for tag, proto in raw.get("scenarios", {}).items():
         speed = proto.get("vut_speed_range_kmh") or [None, None]
         ws.append([
             tag, proto.get("type", "longitudinal"), speed[0], speed[1],
-            proto.get("target_speed_kmh"), proto.get("impact_overlap_pct"),
-            proto.get("direction", ""), bool(proto.get("has_sov", False)),
+            bool(proto.get("side_impact", False)), bool(proto.get("has_sov", False)),
         ])
         dv_type.add(ws.cell(row=ws.max_row, column=2))
 

@@ -66,50 +66,21 @@ def check_rd_02(root: Any, config: Config) -> CheckResult:
     return _make("CH_RD_02", "FAIL", f"Only {count} road segment(s) found - need at least 2")
 
 
-def _is_junction_scenario(scenario_tag: str | None, config: Config) -> bool:
-    """True when the scenario TAG is configured as an EuroNCAP intersection type."""
-    if not scenario_tag or not config.junction_scenario_prefixes:
-        return False
-    tag_upper = scenario_tag.upper()
-    return any(tag_upper.startswith(p.upper()) for p in config.junction_scenario_prefixes)
+def _junction_geometry_applies(root: Any, config: Config) -> tuple[bool, str]:
+    """Decide whether the intersection geometry checks (RD_03-06) apply — purely from
+    the .xodr, no scenario list. A junction counts as a real EuroNCAP intersection
+    (turning OR straight crossing) when its incoming roads come from different
+    directions; a lane-structure junction that links only parallel roads does not.
 
-
-def _junction_geometry_applies(
-    root: Any, scenario_tag: str | None, config: Config
-) -> tuple[bool, str]:
-    """Decide whether the intersection geometry checks (RD_03-06) apply.
-
-    Combines config and a file heuristic so detection is not brittle:
-      * if there is no junction element at all -> NA
-      * if the scenario tag is a configured junction type -> apply
-      * else, if the .xodr junction has connecting roads that genuinely TURN
-        (any arc radius <= junction_detect_max_radius_m), apply anyway - this
-        auto-detects an un-configured turn/crossing scenario (the CCFtap class
-        of bug) instead of silently short-circuiting to NA
-      * a junction with no tight arcs (lane structure/transition only) -> NA
-
-    Returns (applies, na_reason). na_reason is the message to show when NA.
+    Returns (applies, na_reason).
     """
     if not xodr.has_junctions(root):
         return False, "No junctions found - check not applicable"
-    if _is_junction_scenario(scenario_tag, config):
-        return True, ""
-    if xodr.has_turning_junction(root, config.junction_detect_max_radius_m):
+    if xodr.has_intersection_junction(root, config.junction_intersection_min_spread_deg):
         return True, ""
     return False, (
-        "Junction element present but its connecting roads do not turn "
-        "(lane-structure only) and the scenario tag is not a configured junction "
-        "type - intersection geometry check does not apply"
-    )
-
-
-def _heuristic_note(scenario_tag: str | None, config: Config) -> str:
-    """Hint appended when a junction was auto-detected from geometry, not config."""
-    if _is_junction_scenario(scenario_tag, config):
-        return ""
-    return (
-        " [junction auto-detected from .xodr geometry; the scenario tag is not in "
-        "junction_scenario_prefixes - add it to config to make this explicit]"
+        "Junction connects only parallel roads (lane structure, not an intersection) "
+        "- intersection geometry check does not apply"
     )
 
 
@@ -128,14 +99,13 @@ def check_rd_03(root: Any, config: Config, scenario_tag: str | None = None) -> C
         (verify Corner Radius = 8 m in the RoadRunner scene; the VUT's driven
         Part-2 radius is independently validated by CH_SC_07).
     """
-    applies, na_reason = _junction_geometry_applies(root, scenario_tag, config)
+    applies, na_reason = _junction_geometry_applies(root, config)
     if not applies:
         return _make("CH_RD_03", "NA", na_reason)
-    hint = _heuristic_note(scenario_tag, config)
 
     radii = xodr.junction_curvature_radii(root)
     if not radii:
-        return _make("CH_RD_03", "FAIL", f"Junction present but no curvature/arc geometry found.{hint}")
+        return _make("CH_RD_03", "FAIL", "Junction present but no curvature/arc geometry found")
 
     target = config.junction_radius_m
     tolerance = config.junction_radius_tolerance_m
@@ -148,14 +118,14 @@ def check_rd_03(root: Any, config: Config, scenario_tag: str | None = None) -> C
             "FAIL",
             f"Connecting-road radii {too_small} are below the {target} m kerb radius spec — "
             f"lane-centre paths are always wider than the kerb, so the junction corner is "
-            f"tighter than {target} m. Increase the Corner Radius in RoadRunner.{hint}",
+            f"tighter than {target} m. Increase the Corner Radius in RoadRunner.",
         )
 
     if any(abs(r - target) <= tolerance for r in rounded):
         return _make(
             "CH_RD_03",
             "PASS",
-            f"Connecting-road arc radius ≈ {target} m found (radii: {rounded}).{hint}",
+            f"Connecting-road arc radius ≈ {target} m found (radii: {rounded}).",
         )
 
     return _make(
@@ -164,7 +134,7 @@ def check_rd_03(root: Any, config: Config, scenario_tag: str | None = None) -> C
         f"Connecting-road arc radii {rounded} m are lane-centre values; RoadRunner does not "
         f"export the kerb/corner radius to OpenDRIVE. All radii are consistent with a kerb "
         f"radius ≥ {target} m — verify Corner Radius = {target} m in the RoadRunner scene. "
-        f"(VUT driven Part-2 turn radius is independently validated by CH_SC_07.){hint}",
+        f"(VUT driven Part-2 turn radius is independently validated by CH_SC_07.)",
     )
 
 
@@ -176,7 +146,7 @@ def check_rd_04(root: Any, config: Config, scenario_tag: str | None = None) -> C
     the (0,0,0) position of the RoadRunner". Only the POSITION is constrained - the road's
     compass heading is NOT part of this requirement (VUT direction is covered by CH_SC_06).
     """
-    applies, na_reason = _junction_geometry_applies(root, scenario_tag, config)
+    applies, na_reason = _junction_geometry_applies(root, config)
     if not applies:
         return _make("CH_RD_04", "NA", na_reason)
 
@@ -198,7 +168,7 @@ def check_rd_04(root: Any, config: Config, scenario_tag: str | None = None) -> C
 
 def check_rd_05(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """Junction roads must be oriented along VUT direction (entry=start, exit=end)."""
-    applies, na_reason = _junction_geometry_applies(root, scenario_tag, config)
+    applies, na_reason = _junction_geometry_applies(root, config)
     if not applies:
         return _make("CH_RD_05", "NA", na_reason)
 
@@ -228,7 +198,7 @@ def check_rd_05(root: Any, config: Config, scenario_tag: str | None = None) -> C
 
 def check_rd_06(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """Junction scenario lanes must NOT be on shoulder lane."""
-    applies, na_reason = _junction_geometry_applies(root, scenario_tag, config)
+    applies, na_reason = _junction_geometry_applies(root, config)
     if not applies:
         return _make("CH_RD_06", "NA", na_reason)
 

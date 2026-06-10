@@ -119,6 +119,7 @@ def run_validation(
     # ---- Detect scenario tag from xosc filename (used to scope junction checks) ----
     scenario_tag: str | None = None
     designed_impact_pct: float | None = None
+    parsed_name = None
     if xosc_path:
         stem_upper = xosc_path.stem.upper()
         for prefix in sorted(
@@ -191,6 +192,7 @@ def run_validation(
             scenario_results = scenario.run_all(
                 xosc_root, xodr_root_for_sc, config,
                 scenario_tag=scenario_tag, designed_impact_pct=designed_impact_pct,
+                parsed_name=parsed_name,
             )
             for result in scenario_results:
                 result.source_file = xosc_path.name

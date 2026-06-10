@@ -745,13 +745,24 @@ class TestNegativeChecks:
         )
 
     def test_rd_04_road_at_origin_passes(self, config):
-        """Leftmost road starting at (0, 0) should PASS CH_RD_04 (position-only check)."""
+        """Leftmost road starting at (0, 0) should PASS CH_RD_04 (position-only check).
+
+        The junction has two incoming roads from perpendicular directions, so it is
+        auto-detected as a real intersection (no scenario list)."""
         xml = b"""<?xml version="1.0"?>
         <OpenDRIVE>
-          <junction id="1" name="J1"/>
+          <junction id="1" name="J1">
+            <connection id="0" incomingRoad="1" connectingRoad="3"/>
+            <connection id="1" incomingRoad="2" connectingRoad="3"/>
+          </junction>
           <road id="1" length="200" junction="-1">
-            <link><successor elementId="1" elementType="junction"/></link>
             <planView><geometry x="0" y="0" hdg="1.5708" length="200"><line/></geometry></planView>
+            <lanes><laneSection s="0"><right><lane id="-1" type="driving">
+              <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+            </lane></right></laneSection></lanes>
+          </road>
+          <road id="2" length="200" junction="-1">
+            <planView><geometry x="100" y="0" hdg="0" length="200"><line/></geometry></planView>
             <lanes><laneSection s="0"><right><lane id="-1" type="driving">
               <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
             </lane></right></laneSection></lanes>
@@ -759,8 +770,7 @@ class TestNegativeChecks:
         </OpenDRIVE>"""
         root = _parse_xml(xml)
         from src.checks.road import check_rd_04
-        # junction_scenario_prefixes must include this scenario tag; use CP prefix
-        result = check_rd_04(root, config, scenario_tag="CPNCO")
+        result = check_rd_04(root, config)
         assert result.status == "PASS", (
             f"Road at origin (0,0) should PASS regardless of heading. Got {result.status}: {result.comment}"
         )
@@ -769,10 +779,18 @@ class TestNegativeChecks:
         """Leftmost road starting at (598, 0) should FAIL CH_RD_04 (not at origin)."""
         xml = b"""<?xml version="1.0"?>
         <OpenDRIVE>
-          <junction id="1" name="J1"/>
+          <junction id="1" name="J1">
+            <connection id="0" incomingRoad="1" connectingRoad="3"/>
+            <connection id="1" incomingRoad="2" connectingRoad="3"/>
+          </junction>
           <road id="1" length="200" junction="-1">
-            <link><successor elementId="1" elementType="junction"/></link>
             <planView><geometry x="598" y="0" hdg="3.14159" length="200"><line/></geometry></planView>
+            <lanes><laneSection s="0"><right><lane id="-1" type="driving">
+              <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+            </lane></right></laneSection></lanes>
+          </road>
+          <road id="2" length="200" junction="-1">
+            <planView><geometry x="700" y="0" hdg="1.5708" length="200"><line/></geometry></planView>
             <lanes><laneSection s="0"><right><lane id="-1" type="driving">
               <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
             </lane></right></laneSection></lanes>
@@ -780,7 +798,7 @@ class TestNegativeChecks:
         </OpenDRIVE>"""
         root = _parse_xml(xml)
         from src.checks.road import check_rd_04
-        result = check_rd_04(root, config, scenario_tag="CPNCO")
+        result = check_rd_04(root, config)
         assert result.status == "FAIL", (
             f"Road starting at x=598 should FAIL (not at origin). Got {result.status}: {result.comment}"
         )
@@ -981,7 +999,7 @@ class TestNegativeChecks:
         from src.parsers import xosc as xosc_parser
         from src.checks.scenario import check_sc_16
         root = xosc_parser.load(xosc_path)
-        result = check_sc_16(root, config, scenario_tag="CPTA")
+        result = check_sc_16(root, config, scenario_tag="CPTA", designed_impact_pct=10)
         assert result.status == "PASS", result.comment
         assert "Geometric impact estimate" in result.comment
 
@@ -1025,8 +1043,10 @@ class TestNegativeChecks:
         b["naming_convention"] = sorted(b["naming_convention"]["valid_prefixes"])
         assert a == b
 
-    def test_real_ccfhol_impact_estimate_flags_dead_centre(self, config):
-        """Real CCFhol export collides dead-centre (100%) but protocol says 50% → FAIL."""
+    def test_real_ccfhol_impact_estimate_matches_design(self, config):
+        """Real CCFhol export: with the EuroNCAP position metric (target reference point
+        across VUT width, §1.2.5) the impact is ~50% — matching the designed 50Imp. The
+        old band-overlap metric wrongly read 100% (dead-centre); that was a metric artifact."""
         import pathlib
         xosc_path = pathlib.Path("examples/CCFhol/AEB_CCFhol_30VUT_50GVT_50Imp.xosc")
         if not xosc_path.exists():
@@ -1034,9 +1054,9 @@ class TestNegativeChecks:
         from src.parsers import xosc as xosc_parser
         from src.checks.scenario import check_sc_16
         root = xosc_parser.load(xosc_path)
-        result = check_sc_16(root, config, scenario_tag="CCFhol")
-        assert result.status == "FAIL", result.comment
-        assert "100.0%" in result.comment
+        result = check_sc_16(root, config, scenario_tag="CCFhol", designed_impact_pct=50)
+        assert result.status == "PASS", result.comment
+        assert "50" in result.comment
 
     def test_nm_03_optional_file_absent_still_passes(self, config, tmp_path):
         """NM_03 must PASS even when optional catalog files are absent."""

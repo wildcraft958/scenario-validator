@@ -630,3 +630,59 @@ class TestNM02FilenamePattern:
 
     def test_unknown_type_fails(self, config, tmp_path):
         assert self._check(config, tmp_path, "AEB_ZZZ_20VUT_45GVT_50Imp").status == "FAIL"
+
+
+class TestJunctionFileDetection:
+    """Junction detection is fully file-based (no scenario list)."""
+
+    _INTERSECTION = b"""<?xml version="1.0"?>
+    <OpenDRIVE>
+      <junction id="1" name="J1">
+        <connection id="0" incomingRoad="1" connectingRoad="3"/>
+        <connection id="1" incomingRoad="2" connectingRoad="3"/>
+      </junction>
+      <road id="1"><planView><geometry x="0" y="0" hdg="1.5708" length="50"><line/></geometry></planView></road>
+      <road id="2"><planView><geometry x="50" y="0" hdg="0" length="50"><line/></geometry></planView></road>
+    </OpenDRIVE>"""
+
+    _LANE_STRUCTURE = b"""<?xml version="1.0"?>
+    <OpenDRIVE>
+      <junction id="1" name="J1">
+        <connection id="0" incomingRoad="1" connectingRoad="3"/>
+        <connection id="1" incomingRoad="2" connectingRoad="3"/>
+      </junction>
+      <road id="1"><planView><geometry x="0" y="0" hdg="0" length="50"><line/></geometry></planView></road>
+      <road id="2"><planView><geometry x="50" y="0" hdg="0.05" length="50"><line/></geometry></planView></road>
+    </OpenDRIVE>"""
+
+    def test_perpendicular_incoming_roads_is_intersection(self, config):
+        from src.parsers import xodr
+        root = etree.parse(io.BytesIO(self._INTERSECTION), _PARSER).getroot()
+        assert xodr.has_intersection_junction(root, config.junction_intersection_min_spread_deg)
+
+    def test_parallel_incoming_roads_is_not_intersection(self, config):
+        """A lane-structure/transition junction links parallel roads -> excluded."""
+        from src.parsers import xodr
+        root = etree.parse(io.BytesIO(self._LANE_STRUCTURE), _PARSER).getroot()
+        assert not xodr.has_intersection_junction(root, config.junction_intersection_min_spread_deg)
+
+
+class TestSC18FilenameCrossCheck:
+    """CH_SC_18 flags a filename VUT-speed token that disagrees with the .xosc."""
+
+    def test_matching_speed_passes(self, config):
+        from src.checks.naming import parse_scenario_filename
+        from src.checks.scenario import check_sc_18
+        root = _load(CPTA_XOSC)  # real CPTA: 10 km/h VUT
+        pn = parse_scenario_filename("AEB_CPTAno_10VUT_5EPTa_10Imp", config)
+        result = check_sc_18(root, config, scenario_tag="CPTA", parsed_name=pn)
+        assert result.status == "PASS", result.comment
+
+    def test_mismatched_speed_flags_manual_review(self, config):
+        from src.checks.naming import parse_scenario_filename
+        from src.checks.scenario import check_sc_18
+        root = _load(CPTA_XOSC)  # real CPTA trajectory ~10 km/h
+        pn = parse_scenario_filename("AEB_CPTAno_55VUT_5EPTa_10Imp", config)  # filename lies: 55
+        result = check_sc_18(root, config, scenario_tag="CPTA", parsed_name=pn)
+        assert result.status == "MANUAL_REVIEW", result.comment
+        assert "naming mistake" in result.comment.lower()

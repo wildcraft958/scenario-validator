@@ -302,8 +302,46 @@ def check_nm_02(scenario_dir: Path, config: Config) -> CheckResult:
     if value_problems:
         return _make("CH_NM_02", "FAIL", f"Scenario '{base}' - " + "; ".join(value_problems) + ".")
 
+    # Cross-check the filename target-type token against the actual .xosc entity category,
+    # so a mislabeled filename (e.g. '30GVT' on a pedestrian scenario) is caught.
+    mismatch = _target_type_category_mismatch(scenario_dir, config, parsed.target_type)
     detail = f"tag={parsed.type_tag}, {parsed.vut_speed_kmh}km/h VUT, {parsed.target_speed_kmh}{parsed.target_type}, {parsed.impact_pct}% impact"
+    if mismatch:
+        return _make(
+            "CH_NM_02",
+            "MANUAL_REVIEW",
+            f"Filename well-formed ({detail}), but {mismatch} - likely a naming mistake; verify.",
+        )
     return _make("CH_NM_02", "PASS", f"Filename well-formed and values agree with protocol ({detail}).")
+
+
+def _target_type_category_mismatch(scenario_dir: Path, config: Config, target_type: str | None) -> str | None:
+    """Return a message if the filename target token disagrees with the .xosc target
+    entity category, else None (no .xosc / unknown token / category -> no opinion)."""
+    expected = config.target_type_to_category.get(target_type or "")
+    if not expected:
+        return None
+    from ..parsers import xosc as xosc_mod
+
+    xosc_files = list(scenario_dir.glob("*.xosc"))
+    if not xosc_files:
+        return None
+    try:
+        root = xosc_mod.load(xosc_files[0])
+    except Exception:
+        return None
+    vut_upper = {n.upper() for n in config.vut_entity_names}
+    cats: list[str] = []
+    for entity in xosc_mod.get_entities(root):
+        name = xosc_mod.get_entity_name(entity)
+        if name.upper() in vut_upper:
+            continue
+        cat = xosc_mod.get_entity_category(root, name)
+        if cat:
+            cats.append(cat)
+    if cats and expected not in cats:
+        return f"filename target '{target_type}' implies a {expected} but the scene target(s) are {', '.join(sorted(set(cats)))}"
+    return None
 
 
 # ---------------------------------------------------------------------------

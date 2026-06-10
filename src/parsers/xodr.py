@@ -108,16 +108,41 @@ def junction_curvature_radii(root: Any) -> list[float]:
     return radii
 
 
-def has_turning_junction(root: Any, max_radius_m: float) -> bool:
-    """True if a junction has connecting roads that genuinely TURN.
+def get_junction_incoming_road_headings_deg(root: Any) -> list[float]:
+    """Headings (degrees, normalised mod 180) of the roads that feed into junctions."""
+    incoming: set[str] = set()
+    for conn in xpath(root, "//junction/connection"):
+        rid = conn.get("incomingRoad")
+        if rid:
+            incoming.add(rid)
+    headings: list[float] = []
+    for road in get_roads(root):
+        if road.get("id") not in incoming:
+            continue
+        geoms = road.xpath(".//planView/geometry")
+        if geoms:
+            headings.append(round(math.degrees(float(geoms[0].get("hdg", 0))) % 180.0, 1))
+    return headings
 
-    A real EuroNCAP intersection has connecting-road arcs with a tight radius
-    (<= max_radius_m). Lane-structure / lane-transition junctions have no tight
-    arcs. Used as a file heuristic so an un-configured turn/crossing scenario is
-    still recognised as a junction (does not rely on config alone).
+
+def has_intersection_junction(root: Any, min_spread_deg: float) -> bool:
+    """True if a junction connects roads from DIFFERENT directions — a real
+    intersection (turning OR straight crossing) — vs a lane-structure junction that
+    only links parallel roads.
+
+    Detected purely from .xodr geometry, so NO scenario list is needed: if any two
+    incoming-road headings differ by more than min_spread_deg (circular, mod 180),
+    the junction is an intersection. A lane-split/transition junction has parallel
+    incoming roads (spread ~0) and is excluded. Validated on the example scenarios:
+    CCFtap/CPNCO/CPTA all show incoming roads at 0° and 90° (spread 90°).
     """
-    radii = junction_curvature_radii(root)
-    return bool(radii) and min(radii) <= max_radius_m
+    hs = get_junction_incoming_road_headings_deg(root)
+    for i in range(len(hs)):
+        for j in range(i + 1, len(hs)):
+            d = abs(hs[i] - hs[j]) % 180.0
+            if min(d, 180.0 - d) > min_spread_deg:
+                return True
+    return False
 
 
 def get_leftmost_road_origin(root: Any) -> dict[str, float] | None:

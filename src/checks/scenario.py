@@ -455,9 +455,9 @@ def check_sc_10(xosc_root: Any, xodr_root: Any, config: Config, scenario_tag: st
     2. At least 1 waypoint must lie on the junction (for crossing scenarios).
     Checked together for entities with >=3 waypoints (approach-junction-exit pattern).
 
-    Crossing/junction scenarios are identified by config.junction_scenario_prefixes, NOT by raw
-    xodr junction element presence. Some scenarios (e.g. CCFtap) have curved-lane junction
-    elements in xodr purely for lane structure — those are NOT EuroNCAP intersections.
+    A real EuroNCAP intersection (turning OR straight crossing) is identified purely from
+    the .xodr — its incoming roads come from different directions — via
+    xodr.has_intersection_junction. Lane-structure junctions (parallel roads) are excluded.
     """
     waypoints_by_entity = xosc.get_all_waypoints_by_entity(xosc_root)
 
@@ -468,20 +468,8 @@ def check_sc_10(xosc_root: Any, xodr_root: Any, config: Config, scenario_tag: st
             "No waypoints found - could be using other trajectory types. Verify manually.",
         )
 
-    # Determine whether this is a real EuroNCAP junction/crossing scenario.
-    # Same combined guard as RD_03-06: config tag OR a file heuristic (the .xodr has a
-    # junction whose connecting roads actually turn). The heuristic stops an un-configured
-    # turn/crossing scenario from being silently treated as non-intersection.
-    tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
-    tag_is_junction = (
-        bool(tag)
-        and bool(config.junction_scenario_prefixes)
-        and any(tag.upper().startswith(p.upper()) for p in config.junction_scenario_prefixes)
-    )
-    junction_ids = xodr.get_junction_ids(xodr_root)
-    is_junction = bool(junction_ids) and (
-        tag_is_junction
-        or xodr.has_turning_junction(xodr_root, config.junction_detect_max_radius_m)
+    is_junction = xodr.has_junctions(xodr_root) and xodr.has_intersection_junction(
+        xodr_root, config.junction_intersection_min_spread_deg
     )
 
     if not is_junction:
@@ -757,17 +745,20 @@ def _entity_bbox(xosc_root: Any, config: Config, name: str) -> tuple[float, floa
 def _kinematic_impact_verdict(
     xosc_root: Any, config: Config, vut: str,
     expected: float, tolerance: float, check_id: str,
+    side_impact: bool = False,
 ) -> CheckResult:
     """Impact % estimation for RoadRunner kinematic exports — the validator's USP.
 
     The exported trajectories are the UNBRAKED design paths (AEB only exists in the
     real/HIL test), so stepping both actors through time with their exported bounding
     boxes finds the designed first-contact geometry. Gives pre-HIL design feedback
-    that the RoadRunner GUI cannot show. Validated within ±5% on CPTA/CPNCO examples.
+    that the RoadRunner GUI cannot show.
 
-    Metric: Pedestrian target → front-position % (target centre across the VUT front,
-    from the entry side, evaluated when the centre crosses the front plane);
-    Vehicle target → width-band overlap % at first contact.
+    Metric = EuroNCAP impact location (§1.2.5): the target reference point projected
+    onto the VUT WIDTH (0%=right edge, 100%=left); for side-impact scenarios (CMCscp,
+    CBTAfs, CBTAns) onto the VUT LENGTH (0%=rear, 100%=front). The near/far-side variant
+    can measure from the opposite edge, so the estimate is matched against whichever
+    edge is closer to the designed value and both edges are reported for review.
     """
     targets = _identify_targets(xosc_root, config)
     if not targets:
@@ -805,15 +796,15 @@ def _kinematic_impact_verdict(
             f"scenario timing/lateral design does not produce the collision. Adjust in RoadRunner.",
         )
 
-    if category == "Pedestrian" and est.front_pos_left_pct is not None and est.front_pos_right_pct is not None:
-        # Side convention (left vs right edge) varies per protocol scenario; compare
-        # against whichever side matches and report both for human review.
-        left, right = est.front_pos_left_pct, est.front_pos_right_pct
-        computed = min((left, right), key=lambda p: abs(p - expected))
-        metric = f"front position {right:.0f}%/{left:.0f}% from right/left edge"
+    axis_pct = est.impact_pct_length if side_impact else est.impact_pct_width
+    axis = "length (rear 0% → front 100%)" if side_impact else "width (right 0% → left 100%)"
+    if axis_pct is None:
+        computed, metric = None, "n/a"
     else:
-        computed = est.width_overlap_pct
-        metric = "width overlap"
+        # EuroNCAP fixes 0%=right/rear, but near/far-side variants can be measured from
+        # the opposite edge — match against whichever edge is closer to the designed value.
+        computed = min((axis_pct, 100.0 - axis_pct), key=lambda p: abs(p - expected))
+        metric = f"impact location {axis_pct:.0f}% across VUT {axis}"
     detail = (
         f"first contact t={est.t_contact:.2f}s, lateral offset {est.lateral_offset_m:+.2f} m, "
         f"relative heading {est.rel_heading_deg:.0f}°"
@@ -891,7 +882,10 @@ def check_sc_16(
     if vut and xosc.has_init_follow_trajectory(xosc_root, vut):
         # RoadRunner kinematic format: the trajectories are the UNBRAKED design
         # paths — estimate the designed impact geometry directly (USP).
-        return _kinematic_impact_verdict(xosc_root, config, vut, expected, tolerance, "CH_SC_16")
+        return _kinematic_impact_verdict(
+            xosc_root, config, vut, expected, tolerance, "CH_SC_16",
+            side_impact=proto.side_impact,
+        )
 
     pct, msg = _get_impact_percentage(xosc_root, config, proto.type)
     if pct is None:
@@ -923,8 +917,8 @@ def check_sc_17(
     tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
     proto = config.scenario_protocol(tag) if tag else None
 
-    if not proto or proto.type != "longitudinal":
-        return _make("CH_SC_17", "NA", "Not a longitudinal scenario")
+    if not proto or proto.type not in ("longitudinal", "head-on"):
+        return _make("CH_SC_17", "NA", "Not a longitudinal/head-on scenario")
 
     # Per-instance designed overlap from the filename (e.g. 50Imp); fall back to protocol.
     expected = designed_impact_pct if designed_impact_pct is not None else proto.impact_overlap_pct
@@ -932,7 +926,10 @@ def check_sc_17(
     vut = _identify_vut(xosc_root, config)
 
     if vut and xosc.has_init_follow_trajectory(xosc_root, vut):
-        return _kinematic_impact_verdict(xosc_root, config, vut, expected, tolerance, "CH_SC_17")
+        return _kinematic_impact_verdict(
+            xosc_root, config, vut, expected, tolerance, "CH_SC_17",
+            side_impact=proto.side_impact,
+        )
 
     pct, msg = _get_impact_percentage(xosc_root, config, proto.type)
     if pct is None:
@@ -951,8 +948,15 @@ def check_sc_17(
     )
 
 
-def check_sc_18(xosc_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
-    """VUT speed and Target speed at impact must match scenario requirements."""
+def check_sc_18(
+    xosc_root: Any, config: Config, scenario_tag: str | None = None,
+    parsed_name: Any = None,
+) -> CheckResult:
+    """VUT speed and Target speed at impact must match scenario requirements.
+
+    Also cross-checks the filename VUT-speed token against the .xosc trajectory speed and
+    flags a mismatch (likely naming mistake) as MANUAL_REVIEW.
+    """
     tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
     proto = config.scenario_protocol(tag) if tag else None
 
@@ -986,6 +990,17 @@ def check_sc_18(xosc_root: Any, config: Config, scenario_tag: str | None = None)
         )
 
     vut_speed_kmh = vut_speed_ms * 3.6
+
+    # Cross-check the filename VUT token against the measured .xosc speed (naming mistake).
+    if parsed_name is not None and getattr(parsed_name, "vut_speed_kmh", None) is not None:
+        if abs(vut_speed_kmh - parsed_name.vut_speed_kmh) > max(1.5, 0.05 * parsed_name.vut_speed_kmh):
+            return _make(
+                "CH_SC_18",
+                "MANUAL_REVIEW",
+                f"Filename says {parsed_name.vut_speed_kmh} km/h VUT but the .xosc trajectory is "
+                f"{vut_speed_kmh:.1f} km/h ({speed_source}) - likely a naming mistake; verify.",
+            )
+
     if proto.vut_speed_range_kmh:
         lo, hi = proto.vut_speed_range_kmh
         if lo <= vut_speed_kmh <= hi:
@@ -1178,7 +1193,7 @@ def check_sc_22(xosc_root: Any, config: Config, scenario_tag: str | None = None)
 
 def run_all(
     xosc_root: Any, xodr_root: Any, config: Config, scenario_tag: str | None = None,
-    designed_impact_pct: float | None = None,
+    designed_impact_pct: float | None = None, parsed_name: Any = None,
 ) -> list[CheckResult]:
     return [
         check_sc_01(xosc_root, config),
@@ -1198,7 +1213,7 @@ def run_all(
         check_sc_15(xosc_root, config),
         check_sc_16(xosc_root, config, scenario_tag=scenario_tag, designed_impact_pct=designed_impact_pct),
         check_sc_17(xosc_root, config, scenario_tag=scenario_tag, designed_impact_pct=designed_impact_pct),
-        check_sc_18(xosc_root, config, scenario_tag=scenario_tag),
+        check_sc_18(xosc_root, config, scenario_tag=scenario_tag, parsed_name=parsed_name),
         check_sc_19(xosc_root, config),
         check_sc_20(xosc_root, config),
         check_sc_21(xosc_root, config),
