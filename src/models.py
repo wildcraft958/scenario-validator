@@ -23,6 +23,8 @@ _LIST_KEYS = {
     "required_file_extensions", "required_standalone_files",
     "optional_standalone_files", "junction_scenario_prefixes",
     "extra_scenario_prefixes",
+    "allowed_programs", "target_type_tokens", "required_associated_roles",
+    "allowed_impact_overlaps",
 }
 
 
@@ -264,7 +266,7 @@ class Config(BaseModel):
     simulation_time_max_s: float
     impact_tolerance_pct: float
     required_file_extensions: list[str]
-    required_standalone_files: list[str]
+    required_standalone_files: list[str] = []
     vut_entity_names: list[str]
     vehicle_dimensions: dict[str, VehicleDimensions]
     naming_convention: dict
@@ -290,6 +292,13 @@ class Config(BaseModel):
     # Curved-following scenarios (CCF*) have junction elements in their xodr for lane
     # structure, not intersections - those checks must be skipped for them.
     junction_scenario_prefixes: list[str] = []
+    # File-heuristic fallback for junction detection (CH_RD_03-06, CH_SC_10): if the .xodr
+    # contains a junction whose connecting roads turn through a radius at or below this value,
+    # the junction geometry checks run EVEN IF the scenario tag is not in
+    # junction_scenario_prefixes. This stops an un-configured turn/crossing scenario from
+    # silently short-circuiting to NA (the CCFtap class of bug). Lane-structure/transition
+    # junctions have no tight arcs and stay excluded.
+    junction_detect_max_radius_m: float = 50.0
     # ---- Geometry tolerances (previously hardcoded in check logic) ----
     # CH_SC_05: how close to east (0 deg) a WorldPosition heading must be before the
     # negative-y = right-lane heuristic is applied.
@@ -320,6 +329,25 @@ class Config(BaseModel):
     # the SOV (vehicle overtaken by VUT in CCFhol) "can either be a GVT or a real vehicle",
     # so a non-NCAP asset path is protocol-legal for it.
     sov_entity_names: list[str] = ["SOV"]
+    # ---- Scenario filename grammar (CH_NM_02) ----
+    # The team names every scenario base as:
+    #   <program>_<type>_<n>VUT_<n><TargetType>_<n>Imp   e.g. AEB_CCFtap_10VUT_30GVT_50Imp
+    # These knobs let NM_02 validate that structure (and cross-check the values) without
+    # any code edit when the convention grows.
+    allowed_programs: list[str] = ["AEB"]
+    target_type_tokens: list[str] = []          # GVT / EPTa / EPTc / EBTa / EMT / ...
+    vut_speed_suffix: str = "VUT"
+    impact_suffix: str = "Imp"
+    # Impact-overlap is a protocol *variant* parameter (10/25/50/75/90 ...). NM_02 checks the
+    # filename token is one of these; exact-overlap correctness stays with CH_SC_16/17.
+    allowed_impact_overlaps: list[float] = [0, 10, 25, 50, 75, 90, 100]
+    # ---- Associated / affix files (CH_NM_03, CH_FB_01) ----
+    # Files that ship beside the 7 base-named files, named with a fixed affix around {base}.
+    functional_file_pattern: str = "ENCAP_Scenario_func_{base}.xlsm"
+    macro_file_pattern: str = "MACRO_{base}.xlsx"
+    review_file_pattern: str = "{base}_Review.xlsx"
+    # Which associated-file roles are mandatory (the rest are reported but never FAIL).
+    required_associated_roles: list[str] = ["functional", "macro"]
 
     @classmethod
     def load(cls, path: Path | None = None) -> Config:
@@ -398,3 +426,27 @@ class Config(BaseModel):
             if key.lower() in entity_name.lower():
                 return self.vehicle_dimensions[key]
         return self.vehicle_dimensions["default_car"]
+
+    def associated_files(self, base: str) -> list[tuple[str, str, str, bool]]:
+        """Resolve the affix files for a scenario base name.
+
+        Returns (role, expected_name, glob, required) per role. `expected_name`
+        has {base} substituted; `glob` substitutes `*` so the file can be
+        auto-detected even when the base segment drifts or the config is stale
+        (so a misnamed-but-present file is found, not short-circuited to missing).
+        """
+        patterns = [
+            ("functional", self.functional_file_pattern),
+            ("macro", self.macro_file_pattern),
+            ("review", self.review_file_pattern),
+        ]
+        return [
+            (role, pattern.format(base=base), pattern.replace("{base}", "*"),
+             role in self.required_associated_roles)
+            for role, pattern in patterns
+            if pattern
+        ]
+
+    def functional_file_name(self, base: str) -> str:
+        """Resolved name of the functional / Test-Automation workbook for CH_FB_01."""
+        return self.functional_file_pattern.format(base=base)

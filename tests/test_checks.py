@@ -36,6 +36,17 @@ _XOSC_SAMPLE   = _SCENARIOS_DIR / "sample" / "scenario.xosc"
 _FIXTURES_AVAILABLE = _XODR_STRAIGHT.exists() and _XOSC_SAMPLE.exists()
 
 
+def _workbook_bytes() -> bytes:
+    """Minimal valid OOXML (zip) so CH_FB_01's zipfile check treats it as a workbook."""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("[Content_Types].xml", "<Types/>")
+    return buf.getvalue()
+
+
 @pytest.fixture(scope="session")
 def config() -> Config:
     return Config.load()
@@ -1035,6 +1046,9 @@ class TestNegativeChecks:
             (tmp_path / f"{base}{ext}").write_text("dummy")
         for standalone in config.required_standalone_files:
             (tmp_path / standalone).write_text("dummy")
+        for _role, expected, _glob, required in config.associated_files(base):
+            if required:
+                (tmp_path / expected).write_bytes(_workbook_bytes())
         # Do NOT create any of the optional_standalone_files (VehicleCatalog.xosc etc.)
         from src.checks.naming import check_nm_03
         result = check_nm_03(tmp_path, config)
@@ -1280,10 +1294,12 @@ class TestModelReviewSpeedSanity:
 
 
 class TestFunctionalBlock:
-    """CH_FB_01 - TA file provisioning (relabeled from the old CH_MR_01)."""
+    """CH_FB_01 - ENCAP functional / Test-Automation workbook provisioning."""
 
     def test_fb_01_present_parseable_manual_review(self, config, tmp_path):
-        (tmp_path / "TA.xml").write_text("<TA/>", encoding="utf-8")
+        base = "AEB_CCRs_50VUT_0GVT_50Imp"
+        (tmp_path / f"{base}.rrscene").write_text("rrscene", encoding="utf-8")
+        (tmp_path / config.functional_file_name(base)).write_bytes(_workbook_bytes())
         from src.checks.functional_block import check_fb_01
         result = check_fb_01(tmp_path, config)
         assert result.check_id == "CH_FB_01"
@@ -1291,7 +1307,9 @@ class TestFunctionalBlock:
         assert result.status == "MANUAL_REVIEW"
 
     def test_fb_01_empty_file_fails(self, config, tmp_path):
-        (tmp_path / "TA.xml").touch()
+        base = "AEB_CCRs_50VUT_0GVT_50Imp"
+        (tmp_path / f"{base}.rrscene").write_text("rrscene", encoding="utf-8")
+        (tmp_path / config.functional_file_name(base)).touch()  # empty -> not a valid zip
         from src.checks.functional_block import check_fb_01
         result = check_fb_01(tmp_path, config)
         assert result.check_id == "CH_FB_01"

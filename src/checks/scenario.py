@@ -469,18 +469,22 @@ def check_sc_10(xosc_root: Any, xodr_root: Any, config: Config, scenario_tag: st
         )
 
     # Determine whether this is a real EuroNCAP junction/crossing scenario.
-    # Use config.junction_scenario_prefixes (same guard used by RD_03/04/05/06) so that
-    # CCFtap's curved-lane junction element does not trigger the intersection checks.
+    # Same combined guard as RD_03-06: config tag OR a file heuristic (the .xodr has a
+    # junction whose connecting roads actually turn). The heuristic stops an un-configured
+    # turn/crossing scenario from being silently treated as non-intersection.
     tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
-    is_junction = (
+    tag_is_junction = (
         bool(tag)
         and bool(config.junction_scenario_prefixes)
         and any(tag.upper().startswith(p.upper()) for p in config.junction_scenario_prefixes)
     )
-
     junction_ids = xodr.get_junction_ids(xodr_root)
+    is_junction = bool(junction_ids) and (
+        tag_is_junction
+        or xodr.has_turning_junction(xodr_root, config.junction_detect_max_radius_m)
+    )
 
-    if not junction_ids or not is_junction:
+    if not is_junction:
         return _make("CH_SC_10", "PASS", "Longitudinal/non-intersection scenario: no junction waypoint requirement")
 
     road_positions = xodr.get_road_start_end_positions(xodr_root)
@@ -859,7 +863,10 @@ def _collision_course_note(xosc_root: Any, config: Config, vut: str) -> str:
     return ""
 
 
-def check_sc_16(xosc_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
+def check_sc_16(
+    xosc_root: Any, config: Config, scenario_tag: str | None = None,
+    designed_impact_pct: float | None = None,
+) -> CheckResult:
     """Impact % for turning/crossing ≈ protocol value (±5%).
 
     USP: for RoadRunner kinematic exports the validator steps both actors through their
@@ -875,7 +882,9 @@ def check_sc_16(xosc_root: Any, config: Config, scenario_tag: str | None = None)
     if not proto or proto.type not in ("crossing",):
         return _make("CH_SC_16", "NA", "Not a turning/crossing scenario")
 
-    expected = proto.impact_overlap_pct
+    # The per-instance designed overlap comes from the scenario filename (e.g. 50Imp);
+    # fall back to the protocol's nominal value when the filename token is unavailable.
+    expected = designed_impact_pct if designed_impact_pct is not None else proto.impact_overlap_pct
     tolerance = config.impact_tolerance_pct
     vut = _identify_vut(xosc_root, config)
 
@@ -902,7 +911,10 @@ def check_sc_16(xosc_root: Any, config: Config, scenario_tag: str | None = None)
     )
 
 
-def check_sc_17(xosc_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
+def check_sc_17(
+    xosc_root: Any, config: Config, scenario_tag: str | None = None,
+    designed_impact_pct: float | None = None,
+) -> CheckResult:
     """Impact % for longitudinal must exactly match protocol value (±1%).
 
     USP: same trajectory-stepped impact estimation as CH_SC_16 but for longitudinal
@@ -914,7 +926,8 @@ def check_sc_17(xosc_root: Any, config: Config, scenario_tag: str | None = None)
     if not proto or proto.type != "longitudinal":
         return _make("CH_SC_17", "NA", "Not a longitudinal scenario")
 
-    expected = proto.impact_overlap_pct
+    # Per-instance designed overlap from the filename (e.g. 50Imp); fall back to protocol.
+    expected = designed_impact_pct if designed_impact_pct is not None else proto.impact_overlap_pct
     tolerance = config.longitudinal_impact_tolerance_pct
     vut = _identify_vut(xosc_root, config)
 
@@ -1163,7 +1176,10 @@ def check_sc_22(xosc_root: Any, config: Config, scenario_tag: str | None = None)
     )
 
 
-def run_all(xosc_root: Any, xodr_root: Any, config: Config, scenario_tag: str | None = None) -> list[CheckResult]:
+def run_all(
+    xosc_root: Any, xodr_root: Any, config: Config, scenario_tag: str | None = None,
+    designed_impact_pct: float | None = None,
+) -> list[CheckResult]:
     return [
         check_sc_01(xosc_root, config),
         check_sc_02(xosc_root, config),
@@ -1180,8 +1196,8 @@ def run_all(xosc_root: Any, xodr_root: Any, config: Config, scenario_tag: str | 
         check_sc_13(xosc_root, config),
         check_sc_14(xosc_root, config),
         check_sc_15(xosc_root, config),
-        check_sc_16(xosc_root, config, scenario_tag=scenario_tag),
-        check_sc_17(xosc_root, config, scenario_tag=scenario_tag),
+        check_sc_16(xosc_root, config, scenario_tag=scenario_tag, designed_impact_pct=designed_impact_pct),
+        check_sc_17(xosc_root, config, scenario_tag=scenario_tag, designed_impact_pct=designed_impact_pct),
         check_sc_18(xosc_root, config, scenario_tag=scenario_tag),
         check_sc_19(xosc_root, config),
         check_sc_20(xosc_root, config),

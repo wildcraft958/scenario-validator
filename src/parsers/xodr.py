@@ -108,6 +108,18 @@ def junction_curvature_radii(root: Any) -> list[float]:
     return radii
 
 
+def has_turning_junction(root: Any, max_radius_m: float) -> bool:
+    """True if a junction has connecting roads that genuinely TURN.
+
+    A real EuroNCAP intersection has connecting-road arcs with a tight radius
+    (<= max_radius_m). Lane-structure / lane-transition junctions have no tight
+    arcs. Used as a file heuristic so an un-configured turn/crossing scenario is
+    still recognised as a junction (does not rely on config alone).
+    """
+    radii = junction_curvature_radii(root)
+    return bool(radii) and min(radii) <= max_radius_m
+
+
 def get_leftmost_road_origin(root: Any) -> dict[str, float] | None:
     """Returns x,y of the geometry start of the leftmost road (smallest x)."""
     best: dict[str, float] | None = None

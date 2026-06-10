@@ -26,7 +26,17 @@
     ".xml",
     ".txt"
   ],
-  "required_standalone_files": ["TA.xml"],
+  "_filename_grammar_comment": "Scenario base name = <program>_<type>_<n>VUT_<n><TargetType>_<n>Imp (e.g. AEB_CCFtap_10VUT_30GVT_50Imp). CH_NM_02 validates this structure and cross-checks the values.",
+  "allowed_programs": ["AEB"],
+  "target_type_tokens": ["GVT", "EPTa", "EPTc", "EBTa", "EMT", "SOV"],
+  "vut_speed_suffix": "VUT",
+  "impact_suffix": "Imp",
+  "allowed_impact_overlaps": [0, 10, 25, 50, 75, 90, 100],
+  "_associated_files_comment": "Workbooks that ship beside the 7 base files. {base} expands to the scenario base name. 'functional' is the ENCAP Test-Automation file checked by CH_FB_01; 'review' is the manual checklist being replaced by this tool's output.",
+  "functional_file_pattern": "ENCAP_Scenario_func_{base}.xlsm",
+  "macro_file_pattern": "MACRO_{base}.xlsx",
+  "review_file_pattern": "{base}_Review.xlsx",
+  "required_associated_roles": ["functional", "macro"],
   "vut_entity_names": ["VUT", "Ego", "EgoVehicle", "Vehicle"],
   "encap_actor_names": [
     "GVT", "EPTa", "EBTa", "EPTc", "EMT", "SOV",
@@ -39,8 +49,10 @@
   "static_target_name_patterns": ["Obstruction", "GVTs", "GVTb", "GVT_S", "StaticVehicle"],
   "stationary_target_name_patterns": ["EMT", "EPTa", "EPTc", "EBTa"],
   "junction_scenario_prefixes": [
-    "CP", "CB", "CCCscp", "CMCscp"
+    "CP", "CB", "CCCscp", "CMCscp", "CCFtap", "CMFtap"
   ],
+  "_junction_detect_comment": "Safety net so an un-listed turn/crossing scenario is not silently skipped: if the .xodr has a junction whose connecting roads turn at or below this radius (m), RD_03-06 + SC_10 run even when the tag is not in junction_scenario_prefixes. Lane-structure junctions (no tight arcs) stay excluded.",
+  "junction_detect_max_radius_m": 50.0,
   "_geometry_tolerances_comment": "Tuning knobs for geometry checks (previously hardcoded in Python). Safe to leave at defaults.",
   "east_heading_tolerance_deg": 30,
   "cardinal_heading_tolerance_deg": 5,
@@ -85,11 +97,12 @@
     "valid_prefixes": [
       "CCRs", "CCRb", "CCRm", "CCFtap", "CCFhos", "CCFhol", "CCCscp",
       "CPNA", "CPFA", "CPNCO", "CPLA", "CPRA",
-      "CBNA", "CBNAO", "CBFA", "CBLA",
+      "CBNA", "CBNAO", "CBFA", "CBLA", "CBTA",
       "CMRs", "CMRb", "CMFtap", "CMCscp",
       "CPTA"
     ]
   },
+  "_scenarios_comment": "EuroNCAP taxonomy. type is one of longitudinal/crossing/head-on (turn-across-path maps to crossing; turn geometry is handled by junction_scenario_prefixes + curve_part2_radii_m). impact_overlap_pct is the per-instance designed overlap used by SC_16/17; the FILENAME Imp token is validated against allowed_impact_overlaps, not this value. vut_speed_range_kmh / target_speed_kmh from Euro NCAP Crash Avoidance - Frontal Collisions v1.1; left unset where the protocol value is a range or unconfirmed (NM_02 then skips that sub-check).",
   "scenarios": {
     "CCRs": {
       "type": "longitudinal",
@@ -131,48 +144,27 @@
     },
     "CCCscp": {
       "type": "crossing",
+      "vut_speed_range_kmh": [20, 80],
       "impact_overlap_pct": 50,
       "direction": "crossing"
     },
-    "CPNA-25": {
-      "type": "crossing",
-      "vut_speed_range_kmh": [20, 60],
-      "impact_overlap_pct": 25,
-      "direction": "crossing"
-    },
-    "CPNA-50": {
-      "type": "crossing",
-      "vut_speed_range_kmh": [20, 60],
-      "impact_overlap_pct": 50,
-      "direction": "crossing"
-    },
-    "CPNA-75": {
-      "type": "crossing",
-      "vut_speed_range_kmh": [20, 60],
-      "impact_overlap_pct": 75,
-      "direction": "crossing"
-    },
-    "CPFA-50": {
-      "type": "crossing",
-      "vut_speed_range_kmh": [20, 60],
-      "impact_overlap_pct": 50,
-      "direction": "crossing"
-    },
-    "CBNA-50": {
-      "type": "crossing",
-      "vut_speed_range_kmh": [20, 60],
-      "impact_overlap_pct": 50,
-      "direction": "crossing"
-    },
-    "CBLA-25": {
+    "CPLA": {
       "type": "longitudinal",
-      "impact_overlap_pct": 25,
+      "vut_speed_range_kmh": [10, 80],
+      "target_speed_kmh": 5,
       "direction": "left-to-right"
     },
-    "CBLA-50": {
-      "type": "longitudinal",
-      "impact_overlap_pct": 50,
-      "direction": "left-to-right"
+    "CPFA": {
+      "type": "crossing",
+      "vut_speed_range_kmh": [20, 60],
+      "target_speed_kmh": 5,
+      "direction": "crossing"
+    },
+    "CPNA": {
+      "type": "crossing",
+      "vut_speed_range_kmh": [20, 60],
+      "target_speed_kmh": 5,
+      "direction": "crossing"
     },
     "CPNCO": {
       "type": "crossing",
@@ -187,6 +179,56 @@
       "target_speed_kmh": 5,
       "impact_overlap_pct": 10,
       "direction": "crossing"
+    },
+    "CBFA": {
+      "type": "crossing",
+      "vut_speed_range_kmh": [10, 60],
+      "target_speed_kmh": 20,
+      "direction": "crossing"
+    },
+    "CBNA": {
+      "type": "crossing",
+      "vut_speed_range_kmh": [10, 60],
+      "target_speed_kmh": 15,
+      "direction": "crossing"
+    },
+    "CBNAO": {
+      "type": "crossing",
+      "vut_speed_range_kmh": [10, 60],
+      "target_speed_kmh": 10,
+      "direction": "crossing"
+    },
+    "CBLA": {
+      "type": "longitudinal",
+      "vut_speed_range_kmh": [20, 80],
+      "direction": "left-to-right"
+    },
+    "CBTA": {
+      "type": "crossing",
+      "vut_speed_range_kmh": [10, 25],
+      "target_speed_kmh": 15,
+      "direction": "crossing"
+    },
+    "CMCscp": {
+      "type": "crossing",
+      "vut_speed_range_kmh": [20, 80],
+      "direction": "crossing"
+    },
+    "CMFtap": {
+      "type": "crossing",
+      "vut_speed_range_kmh": [10, 25],
+      "direction": "crossing"
+    },
+    "CMRs": {
+      "type": "longitudinal",
+      "vut_speed_range_kmh": [10, 80],
+      "target_speed_kmh": 0,
+      "direction": "left-to-right"
+    },
+    "CMRb": {
+      "type": "longitudinal",
+      "vut_speed_range_kmh": [30, 130],
+      "direction": "left-to-right"
     }
   }
 }
