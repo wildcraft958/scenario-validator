@@ -148,10 +148,11 @@ def test_side_impact_uses_length_axis():
     assert est.impact_pct_length is not None and math.isfinite(est.impact_pct_length)
 
 
-def test_real_ccftap_turn_across_is_manual_review():
-    """Real CCFtap (Car-to-Car Turn-Across-Path): near head-on while the VUT is mid-turn →
-    the estimate is sensitive to the exact contact instant (§1.2.5.2), so SC_16 returns
-    MANUAL_REVIEW (via the geometry-derived sensitivity gate, NOT a tag match)."""
+def test_real_ccftap_turn_across_uses_overlap_metric():
+    """Real CCFtap (Car-to-Car Turn-Across-Path): near head-on while the VUT is mid-turn, so the
+    single-point reference reading is corner-first unstable (§1.2.5.2) and lands ~88%. SC_16 must
+    fall back to the rotation-robust overlap-centre estimate, which recovers the designed ~50%
+    impact (the front edges meet at 50% of the VUT width — EuroNCAP AEB C2C) and PASSES."""
     import pathlib
     xosc_path = pathlib.Path("examples/CCFtap/AEB_CCFtap_20VUT_45GVT_50Imp.xosc")
     if not xosc_path.exists():
@@ -161,8 +162,30 @@ def test_real_ccftap_turn_across_is_manual_review():
     from src.checks.scenario import check_sc_16
     root = xosc_parser.load(xosc_path)
     result = check_sc_16(root, Config.load(), scenario_tag="CCFtap", designed_impact_pct=50)
-    assert result.status == "MANUAL_REVIEW", result.comment
-    assert "uncertainty" in result.comment.lower() and "GVT" in result.comment
+    assert result.status == "PASS", result.comment
+    assert "overlap-centre" in result.comment and "GVT" in result.comment
+    # the reported impact must be the recovered ~50%, not the corner-first ~88%
+    import re
+    m = re.search(r"impact estimate ([\d.]+)%", result.comment)
+    assert m is not None, result.comment
+    assert abs(float(m.group(1)) - 50.0) <= 5.0, result.comment
+
+
+def test_overlap_metric_only_engages_in_rotation_regime():
+    """The overlap-centre fallback must NOT replace the precise reference-point reading for
+    small/slow VRU targets (low sensitivity). CPTA (pedestrian turning) keeps the reference
+    point: its reported impact stays the ~9% reference reading, not the ~15% overlap centre."""
+    import pathlib
+    xosc_path = pathlib.Path("examples/CPTA/AEB_CPTAno_10VUT_5EPTa_10Imp.xosc")
+    if not xosc_path.exists():
+        pytest.skip("CPTA example not present")
+    from src.models import Config
+    from src.parsers import xosc as xosc_parser
+    from src.checks.scenario import check_sc_16
+    root = xosc_parser.load(xosc_path)
+    result = check_sc_16(root, Config.load(), scenario_tag="CPTAno", designed_impact_pct=10)
+    assert "overlap-centre" not in result.comment, result.comment
+    assert result.status in ("PASS", "MANUAL_REVIEW"), result.comment
 
 
 def test_real_ccfhol_head_on_passes():

@@ -43,6 +43,15 @@ class ImpactEstimate(NamedTuple):
     # High = the geometry is rotating/corner-first (§1.2.5.2) so the kinematic estimate
     # cannot pin the location precisely → the caller downgrades the verdict to MANUAL_REVIEW.
     eval_sensitivity_pct: float | None = None
+    # Rotation-robust §1.2.5.2 fallback: the lateral centre of the TARGET footprint over the
+    # VUT extent at first contact (width axis, or length axis for side impacts). When the
+    # heading-rotation corner-first effect makes the reference-point reading sweep wildly, this
+    # overlap-centre stays stable and recovers the protocol impact-location (the front edges
+    # meeting with the designed overlap of the VUT width). overlap_sensitivity_pct is its own
+    # ±0.1 s swing — the caller switches to it only when it is steadier than the reference point.
+    impact_pct_width_overlap: float | None = None
+    impact_pct_length_overlap: float | None = None
+    overlap_sensitivity_pct: float | None = None
 
 
 def _interp(verts: list[dict], t: float) -> tuple[float, float, float]:
@@ -202,12 +211,51 @@ def estimate_trajectory_impact(
     else:
         eval_sensitivity_pct = abs((lat_b - lat_a) / vut_wid * 100.0)
 
+    # Rotation-robust §1.2.5.2 overlap-centre metric. In heading-rotation / high-closing-speed
+    # impacts (turn-across-path) the corner edge contacts BEFORE the target reference point
+    # reaches the impact location, so the single-point reference reading sweeps across the whole
+    # VUT width in the sync window (high eval_sensitivity_pct above). The overlap CENTRE — the
+    # lateral midpoint of where the target footprint covers the VUT extent — is stable through
+    # that corner-first transient and recovers the protocol impact location (EuroNCAP AEB C2C:
+    # "the front edges meet with a lateral position that gives the designed overlap of the VUT
+    # width", reference line = VUT centreline). The caller uses it only when it is steadier than
+    # the reference point (so small/slow VRU targets keep the precise reference-point reading).
+    def overlap_centers(t_eval: float) -> tuple[float | None, float | None]:
+        vx, vy, vh = _interp(vut_verts, t_eval)
+        gx, gy, gh = _interp(tgt_verts, t_eval)
+        cx, cy, tl, tw = tgt_bbox
+        lons: list[float] = []
+        lats: list[float] = []
+        for sx in (-0.5, 0.5):
+            for sy in (-0.5, 0.5):
+                bx, by = cx + sx * tl, cy + sy * tw
+                wx = gx + bx * math.cos(gh) - by * math.sin(gh)
+                wy = gy + bx * math.sin(gh) + by * math.cos(gh)
+                dx, dy = wx - vx, wy - vy
+                lons.append(dx * math.cos(vh) + dy * math.sin(vh))
+                lats.append(-dx * math.sin(vh) + dy * math.cos(vh))
+        wlo, whi = max(min(lats), -vut_wid / 2), min(max(lats), vut_wid / 2)
+        llo, lhi = max(min(lons), -vut_len / 2), min(max(lons), vut_len / 2)
+        w_pct = (vut_wid / 2 + (wlo + whi) / 2) / vut_wid * 100.0 if whi > wlo else None
+        l_pct = (vut_len / 2 + (llo + lhi) / 2) / vut_len * 100.0 if lhi > llo else None
+        return w_pct, l_pct
+
+    ow_c, ol_c = overlap_centers(tc)
+    oa_w, oa_l = overlap_centers(max(t0, tc - w))
+    ob_w, ob_l = overlap_centers(min(t1, tc + w))
+    active = (ol_c, oa_l, ob_l) if side_impact else (ow_c, oa_w, ob_w)
+    overlap_sensitivity_pct = (
+        abs(active[2] - active[1]) if active[1] is not None and active[2] is not None else None
+    )
+
     return ImpactEstimate(
         contact=True, t_contact=tc,
         impact_pct_width=impact_pct_width, impact_pct_length=impact_pct_length,
         lateral_offset_m=lat_c, rel_heading_deg=rel_heading,
         min_gap_m=None, t_min_gap=None,
         eval_sensitivity_pct=eval_sensitivity_pct,
+        impact_pct_width_overlap=ow_c, impact_pct_length_overlap=ol_c,
+        overlap_sensitivity_pct=overlap_sensitivity_pct,
     )
 
 

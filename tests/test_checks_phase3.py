@@ -66,6 +66,29 @@ class TestSC18TargetSpeed:
         assert result.status == "MANUAL_REVIEW", result.comment
         assert "target" in result.comment.lower()
 
+    def test_lower_boundary_speed_passes_via_design_token(self, config):
+        """A 10 km/h VUT design whose measured speed reads 9.98 km/h (vertex discretisation) must
+        PASS the [10, 25] CCFtap range. The exact filename token (10VUT) is graded, not the noisy
+        measurement — the boundary bug was a strict 9.98 < 10 compare that false-FAILed a valid
+        band-edge speed."""
+        from src.checks.naming import parse_scenario_filename
+        from src.checks.scenario import check_sc_18
+        xosc = (
+            b'<?xml version="1.0"?><OpenSCENARIO><FileHeader description="sc18"/>'
+            b'<Entities><ScenarioObject name="VUT"><Vehicle name="VUT"/></ScenarioObject>'
+            b'<ScenarioObject name="GVT"><Vehicle name="GVT"/></ScenarioObject></Entities>'
+            b'<Storyboard><Init><Actions><Private entityRef="VUT"><PrivateAction>'
+            b'<LongitudinalAction><SpeedAction>'
+            b'<SpeedActionDynamics dynamicsDimension="time" dynamicsShape="step" value="0"/>'
+            b'<SpeedActionTarget><AbsoluteTargetSpeed value="2.772"/></SpeedActionTarget>'  # 9.98 km/h
+            b'</SpeedAction></LongitudinalAction></PrivateAction></Private>'
+            b'</Actions></Init><StopTrigger/></Storyboard></OpenSCENARIO>'
+        )
+        root = _parse(xosc)
+        pn = parse_scenario_filename("AEB_CCFtap_10VUT_30GVT_50Imp", config)
+        result = check_sc_18(root, config, scenario_tag="CCFtap", parsed_name=pn)
+        assert result.status == "PASS", result.comment
+
 
 # ============================================================
 # CH_SC_15: a designed-moving target (token > 0) is not a stationary target

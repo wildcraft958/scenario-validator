@@ -16,6 +16,8 @@
   "simulation_time_max_s": 150,
   "impact_tolerance_pct": 5.0,
   "longitudinal_impact_tolerance_pct": 1.0,
+  "impact_rotation_sensitivity_pct": 25.0,
+  "speed_range_tolerance_kmh": 0.5,
   "junction_waypoint_radius_m": 20.0,
   "required_file_extensions": [
     ".rrscene",

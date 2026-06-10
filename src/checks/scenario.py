@@ -174,6 +174,13 @@ def check_sc_04(xosc_root: Any, config: Config) -> CheckResult:
 
     if config.simulation_time_by_speed_s:
         vut = _identify_vut(xosc_root, config)
+        # SC_04 grades the .xosc StopTrigger SimulationTimeCondition — the full scene duration,
+        # which the real RoadRunner exports set to 100-150 s regardless of VUT speed. The
+        # simulation_time_by_speed_s bands (35-60 s) describe the protocol maneuver/approach
+        # time, NOT the scene StopTrigger, so they are intentionally only consulted when an Init
+        # AbsoluteTargetSpeed is present (non-kinematic authoring). Kinematic exports keep the
+        # flat 100-150 s scene-duration range; do NOT fall back to the trajectory speed here, or
+        # the scene duration gets graded against the maneuver-time band and every export FAILs.
         vut_speed_ms = xosc.get_init_speed(xosc_root, vut) if vut else None
         if vut_speed_ms is not None:
             vut_speed_kmh = vut_speed_ms * 3.6
@@ -997,22 +1004,46 @@ def _impact_verdict(
     ref_desc = {(-0.5, 0.0): "rear", (0.5, 0.0): "front", (0.4, 0.0): "front wheel",
                 (-0.4, 0.0): "rear wheel", (-0.25, 0.0): "back", (0.0, 0.0): "centre"}.get(
                     (round(ref_offset[0], 2), round(ref_offset[1], 2)), f"{ref_offset[0]:+.0%}L")
+    sensitivity = est.eval_sensitivity_pct or 0.0
+
+    # §1.2.5.2 rotation-robust estimate. When the VUT is mid-turn / closing fast (turn-across-
+    # path), the impacting corner contacts BEFORE the target reference point reaches the impact
+    # plane, so the single-point reference reading sweeps across the whole VUT width within the
+    # ±0.1 s sync window (high sensitivity) and lands far from the designed location. In that
+    # regime switch to the overlap-centre — the lateral midpoint of where the target footprint
+    # covers the VUT, which is steady through the corner-first transient and recovers the
+    # protocol overlap location (EuroNCAP AEB C2C: the front edges meet at the designed overlap
+    # of the VUT width, reference line = VUT centreline). Only switch when the overlap metric is
+    # actually steadier, so small/slow VRU targets keep the precise reference-point reading.
+    overlap = est.impact_pct_length_overlap if side_impact else est.impact_pct_width_overlap
+    overlap_sens = est.overlap_sensitivity_pct
+    metric_note = ""
+    if (sensitivity > config.impact_rotation_sensitivity_pct
+            and overlap is not None and overlap_sens is not None
+            and overlap_sens < sensitivity):
+        computed = overlap
+        sensitivity = overlap_sens
+        metric_note = (
+            " Uses the rotation-robust §1.2.5.2 overlap-centre estimate (the reference-point "
+            "reading is unstable here — the impacting corner contacts before the reference "
+            "point reaches the impact plane)."
+        )
+
     detail = (
         f"{actor} {motion}, reference={ref_desc}, first contact t={est.t_contact:.2f}s, "
-        f"reference offset {est.lateral_offset_m:+.2f} m, relative heading {est.rel_heading_deg:.0f}°"
+        f"relative heading {est.rel_heading_deg:.0f}°"
     )
     basis = (
         f"Computed from {src} (no AEB by design); §1.2.5 impact location across VUT "
-        f"{axis}{side_note} — confirm in HIL."
+        f"{axis}{side_note}.{metric_note} Confirm in HIL."
     )
     # Uncertainty-aware verdict (derived from geometry, not the scenario name). The estimate
     # carries a kinematic uncertainty = how far the impact % swings across the ±0.1 s SCP sync
-    # window (est.eval_sensitivity_pct). PASS when it lands on the design within tolerance;
-    # MANUAL_REVIEW when the design value still lies inside that uncertainty band (rotating /
-    # fast geometry — §1.2.5.2 — so we can neither confirm nor reject it); FAIL only when the
-    # estimate is confidently off (far from the design AND the geometry is stable).
+    # window. PASS when it lands on the design within tolerance; MANUAL_REVIEW when the design
+    # value still lies inside that uncertainty band (geometry the kinematics cannot pin down —
+    # §1.2.5.2 — so we can neither confirm nor reject it); FAIL only when the estimate is
+    # confidently off (far from the design AND the geometry is stable).
     miss = abs(computed - expected)
-    sensitivity = est.eval_sensitivity_pct or 0.0
     if miss <= tolerance:
         return _make(
             check_id, "PASS",
@@ -1234,20 +1265,36 @@ def check_sc_18(
 
     target_mismatch, target_verified = _target_speed_crosscheck(xosc_root, config, parsed_name)
 
+    # Grade the DESIGNED VUT speed against the protocol range. The filename VUT token (e.g.
+    # 10VUT = 10 km/h) is the exact design value; the measured trajectory peak carries
+    # discretisation noise (a 10 km/h design can measure 9.98 km/h), which a strict comparison
+    # would falsely fail at a band edge. So grade the token when present (already cross-checked
+    # as consistent with the trajectory above), and fall back to the measured speed with a small
+    # boundary tolerance when no token is available.
+    token_kmh = getattr(parsed_name, "vut_speed_kmh", None) if parsed_name is not None else None
+    if token_kmh is not None:
+        graded_kmh = float(token_kmh)
+        graded_src = f"filename design token {token_kmh:.0f} km/h, trajectory {vut_speed_kmh:.1f} km/h"
+        edge_tol = 0.0
+    else:
+        graded_kmh = vut_speed_kmh
+        graded_src = speed_source
+        edge_tol = config.speed_range_tolerance_kmh
+
     if proto.vut_speed_range_kmh:
         lo, hi = proto.vut_speed_range_kmh
-        if not (lo <= vut_speed_kmh <= hi):
+        if not (lo - edge_tol <= graded_kmh <= hi + edge_tol):
             comment = (
-                f"VUT speed = {vut_speed_kmh:.1f} km/h - outside protocol range [{lo}, {hi}] km/h "
-                f"for {tag} (source: {speed_source})"
+                f"VUT speed = {graded_kmh:.1f} km/h - outside protocol range [{lo}, {hi}] km/h "
+                f"for {tag} (source: {graded_src})"
             )
             if target_mismatch:
                 comment += f". Also: {target_mismatch}"
             return _make("CH_SC_18", "FAIL", comment)
 
         vut_msg = (
-            f"VUT speed = {vut_speed_kmh:.1f} km/h in range [{lo}, {hi}] km/h for {tag} "
-            f"(source: {speed_source})"
+            f"VUT speed = {graded_kmh:.1f} km/h in range [{lo}, {hi}] km/h for {tag} "
+            f"(source: {graded_src})"
         )
         if target_mismatch:
             return _make("CH_SC_18", "MANUAL_REVIEW", f"{vut_msg}, but {target_mismatch}")

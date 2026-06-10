@@ -274,6 +274,17 @@ class Config(BaseModel):
     simulation_time_by_speed_s: list[SimTimeThreshold] = []
     # Tighter tolerance for longitudinal impact checks (CH_SC_17)
     longitudinal_impact_tolerance_pct: float = 1.0
+    # CH_SC_16/17: reference-point impact-% sensitivity (how far the % swings across the ±0.1 s
+    # sync window) above which the estimate is in the §1.2.5.2 corner-first rotation regime, so
+    # the verdict uses the rotation-robust overlap-centre metric instead of the single-point
+    # reference reading. Turn-across-path geometry sits well above this; head-on / slow VRU well
+    # below, so they keep the precise reference-point reading.
+    impact_rotation_sensitivity_pct: float = 25.0
+    # CH_SC_18: boundary tolerance (km/h) applied to the protocol VUT-speed range ONLY when the
+    # speed is taken from the measured trajectory (no filename token), to absorb vertex
+    # discretisation noise at a band edge. The exact filename design token is graded with no
+    # tolerance.
+    speed_range_tolerance_kmh: float = 0.5
     # Radius around estimated junction centre used to detect crossing waypoints (CH_SC_10)
     junction_waypoint_radius_m: float = 20.0
     # Expected GVT/EMT deceleration rate for braking scenarios (CH_MR_02)
@@ -423,9 +434,14 @@ class Config(BaseModel):
         return cfg
 
     def scenario_protocol(self, scenario_tag: str) -> ScenarioProtocol | None:
-        for key, proto in self.scenarios.items():
-            if scenario_tag.upper().startswith(key.upper()):
-                return proto
+        # Longest-key-first so a specific sub-variant entry (e.g. CBTAns, which carries
+        # side_impact=True) wins over its generic family prefix (CBTA), instead of whichever
+        # happens to be earlier in insertion order. Mirrors detect_scenario_tag's longest-prefix
+        # rule so the routing key AND the side-impact axis come from the most specific match.
+        tag_upper = scenario_tag.upper()
+        for key in sorted(self.scenarios, key=len, reverse=True):
+            if tag_upper.startswith(key.upper()):
+                return self.scenarios[key]
         return None
 
     def vut_dims(self) -> VehicleDimensions:
