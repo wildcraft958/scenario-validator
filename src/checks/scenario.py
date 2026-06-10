@@ -750,6 +750,24 @@ def is_rear_approach(tag: str | None) -> bool:
     return (tag or "").upper().startswith(("CCR", "CMR", "CPLA", "CBLA"))
 
 
+def turn_subvariant(token: str | None) -> tuple[str, str]:
+    """Decode the EuroNCAP turning sub-variant suffix for CPTA/CBTA tokens.
+
+    Grounded in Frontal v1.1 §3.2.2.1 (Car-to-Pedestrian Turning): the 1st suffix letter is
+    the VUT turn side (f=Farside, n=Nearside) and the 2nd is the target's travel relative to
+    the VUT (s=Same direction, o=Opposite direction). So CPTAfs/CPTAns = Same, CPTAfo/CPTAno
+    = Opposite. Returns ('Farside'|'Nearside'|'', 'Same'|'Opposite'|''); empty for any token
+    that is not a CPTA/CBTA turning sub-variant."""
+    t = (token or "").upper()
+    if not t.startswith(("CPTA", "CBTA")):
+        return "", ""
+    table = {
+        "FS": ("Farside", "Same"), "FO": ("Farside", "Opposite"),
+        "NS": ("Nearside", "Same"), "NO": ("Nearside", "Opposite"),
+    }
+    return table.get(t[-2:], ("", ""))
+
+
 def resolve_actor(
     entity_name: str, filename_token: str | None,
     bbox: tuple[float, float, float, float], osc_category: str,
@@ -1179,13 +1197,53 @@ def check_sc_19(xosc_root: Any, config: Config) -> CheckResult:
     )
 
 
-def check_sc_20(xosc_root: Any, config: Config) -> CheckResult:
-    """VUT turn direction and EBT/EPT direction maintained.
+def _infer_same_opposite(xosc_root: Any, config: Config, vut: str | None, parsed_name: Any) -> str:
+    """Infer whether the primary target travels in the SAME or OPPOSITE direction to the VUT,
+    from the angle between their headings (cos > 0 = Same, < 0 = Opposite). '' when ambiguous
+    (perpendicular crossing) or the headings cannot be read."""
+    if not vut:
+        return ""
+    vut_verts = xosc.get_trajectory_vertices(xosc_root, vut)
+    if vut_verts:
+        h_vut = vut_verts[0]["h"]
+    else:
+        pos = xosc.get_init_positions(xosc_root)
+        if vut not in pos:
+            return ""
+        h_vut = pos[vut]["h"]
 
-    Primary: checks ParameterDeclarations for explicit direction/side parameters.
-    Fallback (RR kinematic format): infers VUT turn direction from trajectory
-    heading change sign — positive net = Farside (left), negative = Nearside (right).
-    The EBT/EPT direction (Same/Opposite) still needs manual verification.
+    target = None
+    if parsed_name is not None and getattr(parsed_name, "target_type", None):
+        target = _resolve_primary_target(xosc_root, config, parsed_name.target_type)
+    if not target:
+        return ""
+    tgt_verts = xosc.get_trajectory_vertices(xosc_root, target)
+    if tgt_verts:
+        sx = sum(math.cos(v["h"]) for v in tgt_verts)
+        sy = sum(math.sin(v["h"]) for v in tgt_verts)
+        h_tgt = math.atan2(sy, sx)
+    else:
+        pos = xosc.get_init_positions(xosc_root)
+        if target not in pos:
+            return ""
+        h_tgt = pos[target]["h"]
+
+    dot = math.cos(h_tgt - h_vut)
+    if dot > 0.2:
+        return "Same"
+    if dot < -0.2:
+        return "Opposite"
+    return ""
+
+
+def check_sc_20(xosc_root: Any, config: Config, parsed_name: Any = None) -> CheckResult:
+    """VUT turn direction (Farside/Nearside) and target direction (Same/Opposite) maintained.
+
+    Primary: explicit direction/side ParameterDeclarations. Otherwise (RR kinematic format)
+    the intended sub-variant is decoded from the filename suffix (CPTA/CBTA fo/fs/no/ns, per
+    Frontal v1.1 §3.2.2.1) and confirmed against the geometry: the VUT turn side from its
+    trajectory curvature, and Same/Opposite from the target-vs-VUT heading. A geometry that
+    contradicts the name is flagged for review.
     """
     params = xosc.get_parameter_declarations(xosc_root)
     direction_params = [
@@ -1196,26 +1254,54 @@ def check_sc_20(xosc_root: Any, config: Config) -> CheckResult:
         values = ", ".join(f"{p['name']}={p['value']}" for p in direction_params)
         return _make("CH_SC_20", "PASS", f"Direction parameters found: {values}")
 
-    # RR kinematic format: no ParameterDeclarations — infer VUT turn direction
-    # from the net heading change across the curved section of the trajectory.
     vut = _identify_vut(xosc_root, config)
-    inferred_direction = ""
+    inferred_side = ""
     if vut and xosc.has_init_follow_trajectory(xosc_root, vut):
-        _, direction = xosc.get_polyline_part2_radius(
+        _, inferred_side = xosc.get_polyline_part2_radius(
             xosc_root, vut, handedness=config.traffic_handedness
         )
-        if direction:
-            inferred_direction = (
-                f" Inferred VUT turn direction from trajectory: {direction} "
-                f"(traffic_handedness={config.traffic_handedness}; in LHT positive heading = Farside/left). "
-                f"Verify the EBT/EPT direction (Same/Opposite) matches the scenario intent."
-            )
+    inferred_cross = _infer_same_opposite(xosc_root, config, vut, parsed_name)
 
+    token = getattr(parsed_name, "type_token", None) if parsed_name is not None else None
+    intended_side, intended_cross = turn_subvariant(token)
+
+    if intended_side or intended_cross:
+        discrepancies: list[str] = []
+        if intended_side and inferred_side and inferred_side != intended_side:
+            discrepancies.append(f"name says {intended_side} turn but the trajectory turns {inferred_side}")
+        if intended_cross and inferred_cross and inferred_cross != intended_cross:
+            discrepancies.append(f"name says target {intended_cross} direction but the geometry shows {inferred_cross}")
+
+        side_ok = bool(intended_side and inferred_side == intended_side)
+        cross_ok = bool(intended_cross and inferred_cross == intended_cross)
+        sub = (
+            f"{token}: VUT {intended_side} turn"
+            + (" (trajectory confirms)" if side_ok else "")
+            + f", target {intended_cross} direction"
+            + (" (geometry confirms)" if cross_ok else "")
+        )
+        if discrepancies:
+            return _make("CH_SC_20", "MANUAL_REVIEW", f"{sub}. Discrepancy: {'; '.join(discrepancies)} - verify.")
+        if side_ok or cross_ok:
+            return _make("CH_SC_20", "PASS", f"Sub-variant {sub}.")
+        return _make(
+            "CH_SC_20",
+            "MANUAL_REVIEW",
+            f"Sub-variant from filename {sub}, but the geometry could not confirm it - verify manually.",
+        )
+
+    inferred_direction = ""
+    if inferred_side:
+        inferred_direction = (
+            f" Inferred VUT turn direction from trajectory: {inferred_side} "
+            f"(traffic_handedness={config.traffic_handedness}; in LHT positive heading = Farside/left). "
+            f"Verify the target direction (Same/Opposite) matches the scenario intent."
+        )
     base_msg = "No direction/side parameters in ParameterDeclarations."
     return _make(
         "CH_SC_20",
         "MANUAL_REVIEW",
-        base_msg + (inferred_direction or " Manually verify VUT turn direction and EBT/EPT direction."),
+        base_msg + (inferred_direction or " Manually verify VUT turn direction and target direction."),
     )
 
 
@@ -1353,7 +1439,7 @@ def run_all(
         check_sc_17(xosc_root, config, scenario_tag=scenario_tag, designed_impact_pct=designed_impact_pct, parsed_name=parsed_name),
         check_sc_18(xosc_root, config, scenario_tag=scenario_tag, parsed_name=parsed_name),
         check_sc_19(xosc_root, config),
-        check_sc_20(xosc_root, config),
+        check_sc_20(xosc_root, config, parsed_name=parsed_name),
         check_sc_21(xosc_root, config),
         check_sc_22(xosc_root, config, scenario_tag=scenario_tag),
     ]

@@ -85,6 +85,55 @@ def _junction_with_connecting_lane(lane_type: str) -> bytes:
 </OpenDRIVE>""".encode()
 
 
+CPTA_XOSC = EXAMPLES / "CPTA" / "AEB_CPTAno_10VUT_5EPTa_10Imp.xosc"
+
+
+# ============================================================
+# CH_SC_20: Farside/Nearside + Same/Opposite sub-variant (RAG-grounded suffix)
+# ============================================================
+
+class TestSC20SubVariant:
+    def test_turn_subvariant_decoder(self):
+        from src.checks.scenario import turn_subvariant
+        assert turn_subvariant("CPTAfs") == ("Farside", "Same")
+        assert turn_subvariant("CPTAfo") == ("Farside", "Opposite")
+        assert turn_subvariant("CPTAns") == ("Nearside", "Same")
+        assert turn_subvariant("CPTAno") == ("Nearside", "Opposite")
+        assert turn_subvariant("CBTAns") == ("Nearside", "Same")
+        # non-turning / no suffix -> empty
+        assert turn_subvariant("CCFhol") == ("", "")
+        assert turn_subvariant("CPNCO") == ("", "")
+        assert turn_subvariant(None) == ("", "")
+
+    def test_real_cpta_no_is_nearside_opposite(self, config):
+        """CPTAno: VUT trajectory turns Nearside, EPTa travels Opposite -> PASS naming both."""
+        if not CPTA_XOSC.exists():
+            pytest.skip("CPTA example not present")
+        from src.parsers import xosc as xp
+        from src.checks.naming import parse_scenario_filename
+        from src.checks.scenario import check_sc_20
+        root = xp.load(CPTA_XOSC)
+        pn = parse_scenario_filename("AEB_CPTAno_10VUT_5EPTa_10Imp", config)
+        result = check_sc_20(root, config, parsed_name=pn)
+        assert result.status == "PASS", result.comment
+        assert "Nearside" in result.comment and "Opposite" in result.comment
+
+
+# ============================================================
+# CH_SC_01: kinematic single-path coverage caveat
+# ============================================================
+
+class TestSC01CoverageCaveat:
+    def test_kinematic_pass_notes_partial_coverage(self, config):
+        if not CPTA_XOSC.exists():
+            pytest.skip("CPTA example not present")
+        from src.parsers import xosc as xp
+        from src.checks.scenario import check_sc_01
+        result = check_sc_01(xp.load(CPTA_XOSC), config)
+        assert result.status == "PASS", result.comment
+        assert "coverage" in result.comment.lower() or "variation" in result.comment.lower()
+
+
 class TestRD06DrivingLaneAllowlist:
     def test_sidewalk_on_connecting_road_fails(self, config):
         from src.checks.road import check_rd_06
