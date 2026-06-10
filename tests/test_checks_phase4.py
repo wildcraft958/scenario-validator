@@ -134,6 +134,43 @@ class TestSC01CoverageCaveat:
         assert "coverage" in result.comment.lower() or "variation" in result.comment.lower()
 
 
+CPNCO_XOSC = EXAMPLES / "CPNCO" / "AEB_CPNCO_30VUT_5EPTc_50Imp.xosc"
+
+
+# ============================================================
+# CH_SC_14: obstruction layout (spacing + lateral offset) vs protocol
+# ============================================================
+
+class TestSC14ObstructionLayout:
+    def test_real_cpnco_layout_ok(self, config):
+        """Real CPNCO: 2 obstructions ~5.4 m apart (~1 m bumper gap), ~1.8 m nearside edge
+        offset -> matches the protocol layout -> PASS, with the measurements reported."""
+        if not CPNCO_XOSC.exists():
+            pytest.skip("CPNCO example not present")
+        from src.parsers import xosc as xp
+        from src.checks.scenario import check_sc_14
+        result = check_sc_14(xp.load(CPNCO_XOSC), config)
+        assert result.status == "PASS", result.comment
+        assert "spacing" in result.comment.lower() and "offset" in result.comment.lower()
+
+    def test_bad_spacing_flags_manual_review(self, config):
+        """Move an obstruction far out of the 1 m bumper-gap layout -> MANUAL_REVIEW."""
+        if not CPNCO_XOSC.exists():
+            pytest.skip("CPNCO example not present")
+        from src.parsers import xosc as xp
+        from src.checks.scenario import check_sc_14
+        root = xp.load(CPNCO_XOSC)
+        # SmallObstructionVehicle is placed via Init WorldPosition; push it 40 m along.
+        moved = False
+        for priv in root.xpath("//Init//Private[@entityRef='SmallObstructionVehicle']"):
+            for wp in priv.xpath(".//WorldPosition"):
+                wp.set("y", str(float(wp.get("y", "0")) + 40.0))
+                moved = True
+        assert moved, "could not mutate SmallObstructionVehicle position"
+        result = check_sc_14(root, config)
+        assert result.status == "MANUAL_REVIEW", result.comment
+
+
 class TestRD06DrivingLaneAllowlist:
     def test_sidewalk_on_connecting_road_fails(self, config):
         from src.checks.road import check_rd_06

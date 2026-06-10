@@ -622,8 +622,69 @@ def _check_zero_speed(xosc_root: Any, config: Config, entity_name: str, check_id
     )
 
 
+def _vut_heading(xosc_root: Any, vut: str | None) -> float | None:
+    """VUT travel heading (rad): first trajectory vertex, else Init pose."""
+    if not vut:
+        return None
+    verts = xosc.get_trajectory_vertices(xosc_root, vut)
+    if verts:
+        return verts[0]["h"]
+    pos = xosc.get_init_positions(xosc_root)
+    return pos[vut]["h"] if vut in pos else None
+
+
+def _obstruction_layout_note(
+    xosc_root: Any, config: Config, vut: str | None, obstructions: list[str]
+) -> tuple[bool, str]:
+    """Measure the parked-obstruction layout against Frontal v1.1 TEST PROCEDURE 3.2.3:
+    vehicles 1 m apart bumper-to-bumper, lateral edge offset 2 m (nearside) / 5.5 m (farside)
+    to the VUT trajectory. Returns (ok, human note). ok is False only on a clear deviation;
+    geometry that cannot be measured returns (True, '') so it never hard-fails the 0-speed check.
+    """
+    if len(obstructions) < 2:
+        return True, ""
+    heading = _vut_heading(xosc_root, vut)
+    pos = xosc.get_init_positions(xosc_root)
+    pts = [(o, pos[o]) for o in obstructions if o in pos]
+    if heading is None or vut not in pos or len(pts) < 2:
+        return True, ""
+
+    cos_h, sin_h = math.cos(heading), math.sin(heading)
+    vx, vy = pos[vut]["x"], pos[vut]["y"]
+    # project each obstruction onto the VUT travel axis (along) and the lateral axis
+    along = {o: (p["x"] - vx) * cos_h + (p["y"] - vy) * sin_h for o, p in pts}
+    lateral = {o: abs(-(p["x"] - vx) * sin_h + (p["y"] - vy) * cos_h) for o, p in pts}
+    ordered = sorted(along, key=lambda o: along[o])
+
+    veh_len = config.vehicle_dimensions.get("GVT", config.vehicle_dimensions["default_car"]).length
+    veh_half_w = config.vehicle_dimensions.get("GVT", config.vehicle_dimensions["default_car"]).width / 2.0
+    expected_spacing = veh_len + config.obstruction_gap_m
+    tol = config.obstruction_layout_tolerance_m
+
+    spacings = [along[ordered[i + 1]] - along[ordered[i]] for i in range(len(ordered) - 1)]
+    spacing_ok = all(abs(s - expected_spacing) <= tol for s in spacings)
+
+    edge_offset = min(lateral.values()) - veh_half_w
+    near, far = config.obstruction_offset_nearside_m, config.obstruction_offset_farside_m
+    side = "nearside" if abs(edge_offset - near) <= abs(edge_offset - far) else "farside"
+    expected_offset = near if side == "nearside" else far
+    offset_ok = abs(edge_offset - expected_offset) <= tol
+
+    note = (
+        f"Obstruction layout: {len(pts)} vehicles, spacing {', '.join(f'{s:.1f}' for s in spacings)} m "
+        f"(expect ~{expected_spacing:.1f} m = {veh_len:.1f} m vehicle + {config.obstruction_gap_m:.1f} m gap), "
+        f"lateral edge offset ~{edge_offset:.1f} m ({side}, expect {expected_offset:.1f} m)."
+    )
+    return (spacing_ok and offset_ok), note
+
+
 def check_sc_14(xosc_root: Any, config: Config) -> CheckResult:
-    """Static targets/obstructions: Initialize Speed = Absolute(0 m/s)."""
+    """Static targets/obstructions: Initialize Speed = Absolute(0 m/s).
+
+    For obstruction scenarios (>=2 obstruction vehicles) the parked layout is also measured
+    against the protocol (1 m bumper gap, 2 m nearside / 5.5 m farside lateral offset) and a
+    clear deviation downgrades the PASS to MANUAL_REVIEW.
+    """
     entities = [xosc.get_entity_name(e) for e in xosc.get_entities(xosc_root)]
     vut = _identify_vut(xosc_root, config)
 
@@ -652,9 +713,21 @@ def check_sc_14(xosc_root: Any, config: Config) -> CheckResult:
 
     results = [_check_zero_speed(xosc_root, config, e, "CH_SC_14") for e in static_candidates]
     fails = [r for r in results if r.status == "FAIL"]
-    if not fails:
-        return _make("CH_SC_14", "PASS", f"All static entities ({', '.join(static_candidates)}) have 0 m/s init speed")
-    return _make("CH_SC_14", "FAIL", "; ".join(r.comment for r in fails))
+    if fails:
+        return _make("CH_SC_14", "FAIL", "; ".join(r.comment for r in fails))
+
+    obstructions = [e for e in static_candidates if "OBSTRUCTION" in e.upper()]
+    layout_ok, layout_note = _obstruction_layout_note(xosc_root, config, vut, obstructions)
+    base = f"All static entities ({', '.join(static_candidates)}) have 0 m/s init speed"
+    if not layout_note:
+        return _make("CH_SC_14", "PASS", base)
+    if layout_ok:
+        return _make("CH_SC_14", "PASS", f"{base}. {layout_note}")
+    return _make(
+        "CH_SC_14",
+        "MANUAL_REVIEW",
+        f"{base}, but the obstruction layout deviates from the protocol - verify. {layout_note}",
+    )
 
 
 def check_sc_15(xosc_root: Any, config: Config, parsed_name: Any = None) -> CheckResult:

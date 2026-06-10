@@ -301,6 +301,14 @@ class Config(BaseModel):
     # CH_RD_04: how close the leftmost junction road's start must be to the RoadRunner
     # origin (0,0) to PASS. Tight by default - the checklist requires (0,0,0) exactly.
     road_origin_tolerance_m: float = 0.01
+    # CH_SC_14 obstruction layout (Frontal v1.1 TEST PROCEDURE 3.2.3): the group of parked
+    # obstruction vehicles sits 1 m apart bumper-to-bumper, at a lateral offset of 2 m
+    # (nearside target approach) or 5.5 m (farside) from the parked-vehicle edge to the VUT
+    # trajectory. Used to report the measured obstruction layout against the protocol.
+    obstruction_gap_m: float = 1.0
+    obstruction_offset_nearside_m: float = 2.0
+    obstruction_offset_farside_m: float = 5.5
+    obstruction_layout_tolerance_m: float = 1.0
     # get_polyline_curvature_radii / CH_SC_07: minimum per-vertex heading change (rad) and
     # segment length (m) for a polyline section to count as "curving" rather than straight.
     curvature_min_heading_delta_rad: float = 0.01
