@@ -568,14 +568,26 @@ class TestNM01ActorNaming:
 # ============================================================
 
 class TestSC10JunctionWaypoints:
-    def test_ccftap_is_non_junction_na(self, config):
-        """CCFtap has a curved-lane junction in xodr but is NOT a junction scenario."""
+    def test_ccftap_is_junction_scenario(self, config):
+        """CCFtap is a Front Turn-Across-Path scenario: its .xodr junction has real
+        turning connecting roads, so SC_10 evaluates the junction waypoint requirement."""
         from src.checks.scenario import check_sc_10
         from lxml import etree
         xodr_root = etree.parse(str(EXAMPLES / "CCFtap" / "AEB_CCFtap_20VUT_45GVT_50Imp.xodr"), _PARSER).getroot()
         result = check_sc_10(_load(CCFTAP_XOSC), xodr_root, config, scenario_tag="CCFtap")
-        assert result.status == "PASS"
-        assert "non-intersection" in result.comment.lower()
+        assert result.status in {"PASS", "FAIL"}
+        assert "non-intersection" not in result.comment.lower()
+        assert "junction" in result.comment.lower()
+
+    def test_unlisted_turn_scenario_detected_by_geometry(self, config):
+        """A turn scenario NOT in junction_scenario_prefixes is still detected via the
+        .xodr file heuristic (the CCFtap class of bug must not silently short-circuit)."""
+        from src.checks.scenario import check_sc_10
+        from lxml import etree
+        xodr_root = etree.parse(str(EXAMPLES / "CCFtap" / "AEB_CCFtap_20VUT_45GVT_50Imp.xodr"), _PARSER).getroot()
+        # scenario_tag=None and not configured -> only the geometry heuristic can detect it
+        result = check_sc_10(_load(CCFTAP_XOSC), xodr_root, config, scenario_tag="ZZUNLISTED")
+        assert "non-intersection" not in result.comment.lower()
 
     def test_cpnco_junction_coverage_passes(self, config):
         """CPNCO is a real junction scenario — trajectory passes through junction → PASS."""
@@ -588,3 +600,89 @@ class TestSC10JunctionWaypoints:
         from src.checks.scenario import check_sc_10
         result = check_sc_10(_load(CPTA_XOSC), _load(CPTA_XODR), config, scenario_tag="CPTA")
         assert result.status == "PASS"
+
+
+class TestNM02FilenamePattern:
+    """CH_NM_02: structured filename + value cross-check."""
+
+    def _check(self, config, tmp_path, base):
+        (tmp_path / f"{base}.rrscene").write_text("rrscene", encoding="utf-8")
+        from src.checks.naming import check_nm_02
+        return check_nm_02(tmp_path, config)
+
+    def test_real_car_base_passes(self, config, tmp_path):
+        assert self._check(config, tmp_path, "AEB_CCFtap_20VUT_45GVT_50Imp").status == "PASS"
+
+    def test_real_vru_base_passes(self, config, tmp_path):
+        # 5EPTa target token (pedestrian), 10% impact, 10 km/h VUT all within CPTA protocol
+        assert self._check(config, tmp_path, "AEB_CPTAno_10VUT_5EPTa_10Imp").status == "PASS"
+
+    def test_missing_token_fails(self, config, tmp_path):
+        assert self._check(config, tmp_path, "AEB_CCFtap_20VUT_50Imp").status == "FAIL"
+
+    def test_vut_speed_out_of_range_fails(self, config, tmp_path):
+        # CCFtap protocol VUT range is [10, 25]; 80 km/h is out of range
+        assert self._check(config, tmp_path, "AEB_CCFtap_80VUT_45GVT_50Imp").status == "FAIL"
+
+    def test_disallowed_impact_token_fails(self, config, tmp_path):
+        # 33 is not an allowed protocol overlap
+        assert self._check(config, tmp_path, "AEB_CCFtap_20VUT_45GVT_33Imp").status == "FAIL"
+
+    def test_unknown_type_fails(self, config, tmp_path):
+        assert self._check(config, tmp_path, "AEB_ZZZ_20VUT_45GVT_50Imp").status == "FAIL"
+
+
+class TestJunctionFileDetection:
+    """Junction detection is fully file-based (no scenario list)."""
+
+    _INTERSECTION = b"""<?xml version="1.0"?>
+    <OpenDRIVE>
+      <junction id="1" name="J1">
+        <connection id="0" incomingRoad="1" connectingRoad="3"/>
+        <connection id="1" incomingRoad="2" connectingRoad="3"/>
+      </junction>
+      <road id="1"><planView><geometry x="0" y="0" hdg="1.5708" length="50"><line/></geometry></planView></road>
+      <road id="2"><planView><geometry x="50" y="0" hdg="0" length="50"><line/></geometry></planView></road>
+    </OpenDRIVE>"""
+
+    _LANE_STRUCTURE = b"""<?xml version="1.0"?>
+    <OpenDRIVE>
+      <junction id="1" name="J1">
+        <connection id="0" incomingRoad="1" connectingRoad="3"/>
+        <connection id="1" incomingRoad="2" connectingRoad="3"/>
+      </junction>
+      <road id="1"><planView><geometry x="0" y="0" hdg="0" length="50"><line/></geometry></planView></road>
+      <road id="2"><planView><geometry x="50" y="0" hdg="0.05" length="50"><line/></geometry></planView></road>
+    </OpenDRIVE>"""
+
+    def test_perpendicular_incoming_roads_is_intersection(self, config):
+        from src.parsers import xodr
+        root = etree.parse(io.BytesIO(self._INTERSECTION), _PARSER).getroot()
+        assert xodr.has_intersection_junction(root, config.junction_intersection_min_spread_deg)
+
+    def test_parallel_incoming_roads_is_not_intersection(self, config):
+        """A lane-structure/transition junction links parallel roads -> excluded."""
+        from src.parsers import xodr
+        root = etree.parse(io.BytesIO(self._LANE_STRUCTURE), _PARSER).getroot()
+        assert not xodr.has_intersection_junction(root, config.junction_intersection_min_spread_deg)
+
+
+class TestSC18FilenameCrossCheck:
+    """CH_SC_18 flags a filename VUT-speed token that disagrees with the .xosc."""
+
+    def test_matching_speed_passes(self, config):
+        from src.checks.naming import parse_scenario_filename
+        from src.checks.scenario import check_sc_18
+        root = _load(CPTA_XOSC)  # real CPTA: 10 km/h VUT
+        pn = parse_scenario_filename("AEB_CPTAno_10VUT_5EPTa_10Imp", config)
+        result = check_sc_18(root, config, scenario_tag="CPTA", parsed_name=pn)
+        assert result.status == "PASS", result.comment
+
+    def test_mismatched_speed_flags_manual_review(self, config):
+        from src.checks.naming import parse_scenario_filename
+        from src.checks.scenario import check_sc_18
+        root = _load(CPTA_XOSC)  # real CPTA trajectory ~10 km/h
+        pn = parse_scenario_filename("AEB_CPTAno_55VUT_5EPTa_10Imp", config)  # filename lies: 55
+        result = check_sc_18(root, config, scenario_tag="CPTA", parsed_name=pn)
+        assert result.status == "MANUAL_REVIEW", result.comment
+        assert "naming mistake" in result.comment.lower()

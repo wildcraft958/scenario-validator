@@ -36,6 +36,17 @@ _XOSC_SAMPLE   = _SCENARIOS_DIR / "sample" / "scenario.xosc"
 _FIXTURES_AVAILABLE = _XODR_STRAIGHT.exists() and _XOSC_SAMPLE.exists()
 
 
+def _workbook_bytes() -> bytes:
+    """Minimal valid OOXML (zip) so CH_FB_01's zipfile check treats it as a workbook."""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("[Content_Types].xml", "<Types/>")
+    return buf.getvalue()
+
+
 @pytest.fixture(scope="session")
 def config() -> Config:
     return Config.load()
@@ -734,13 +745,24 @@ class TestNegativeChecks:
         )
 
     def test_rd_04_road_at_origin_passes(self, config):
-        """Leftmost road starting at (0, 0) should PASS CH_RD_04 (position-only check)."""
+        """Leftmost road starting at (0, 0) should PASS CH_RD_04 (position-only check).
+
+        The junction has two incoming roads from perpendicular directions, so it is
+        auto-detected as a real intersection (no scenario list)."""
         xml = b"""<?xml version="1.0"?>
         <OpenDRIVE>
-          <junction id="1" name="J1"/>
+          <junction id="1" name="J1">
+            <connection id="0" incomingRoad="1" connectingRoad="3"/>
+            <connection id="1" incomingRoad="2" connectingRoad="3"/>
+          </junction>
           <road id="1" length="200" junction="-1">
-            <link><successor elementId="1" elementType="junction"/></link>
             <planView><geometry x="0" y="0" hdg="1.5708" length="200"><line/></geometry></planView>
+            <lanes><laneSection s="0"><right><lane id="-1" type="driving">
+              <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+            </lane></right></laneSection></lanes>
+          </road>
+          <road id="2" length="200" junction="-1">
+            <planView><geometry x="100" y="0" hdg="0" length="200"><line/></geometry></planView>
             <lanes><laneSection s="0"><right><lane id="-1" type="driving">
               <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
             </lane></right></laneSection></lanes>
@@ -748,8 +770,7 @@ class TestNegativeChecks:
         </OpenDRIVE>"""
         root = _parse_xml(xml)
         from src.checks.road import check_rd_04
-        # junction_scenario_prefixes must include this scenario tag; use CP prefix
-        result = check_rd_04(root, config, scenario_tag="CPNCO")
+        result = check_rd_04(root, config)
         assert result.status == "PASS", (
             f"Road at origin (0,0) should PASS regardless of heading. Got {result.status}: {result.comment}"
         )
@@ -758,10 +779,18 @@ class TestNegativeChecks:
         """Leftmost road starting at (598, 0) should FAIL CH_RD_04 (not at origin)."""
         xml = b"""<?xml version="1.0"?>
         <OpenDRIVE>
-          <junction id="1" name="J1"/>
+          <junction id="1" name="J1">
+            <connection id="0" incomingRoad="1" connectingRoad="3"/>
+            <connection id="1" incomingRoad="2" connectingRoad="3"/>
+          </junction>
           <road id="1" length="200" junction="-1">
-            <link><successor elementId="1" elementType="junction"/></link>
             <planView><geometry x="598" y="0" hdg="3.14159" length="200"><line/></geometry></planView>
+            <lanes><laneSection s="0"><right><lane id="-1" type="driving">
+              <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+            </lane></right></laneSection></lanes>
+          </road>
+          <road id="2" length="200" junction="-1">
+            <planView><geometry x="700" y="0" hdg="1.5708" length="200"><line/></geometry></planView>
             <lanes><laneSection s="0"><right><lane id="-1" type="driving">
               <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
             </lane></right></laneSection></lanes>
@@ -769,7 +798,7 @@ class TestNegativeChecks:
         </OpenDRIVE>"""
         root = _parse_xml(xml)
         from src.checks.road import check_rd_04
-        result = check_rd_04(root, config, scenario_tag="CPNCO")
+        result = check_rd_04(root, config)
         assert result.status == "FAIL", (
             f"Road starting at x=598 should FAIL (not at origin). Got {result.status}: {result.comment}"
         )
@@ -970,7 +999,7 @@ class TestNegativeChecks:
         from src.parsers import xosc as xosc_parser
         from src.checks.scenario import check_sc_16
         root = xosc_parser.load(xosc_path)
-        result = check_sc_16(root, config, scenario_tag="CPTA")
+        result = check_sc_16(root, config, scenario_tag="CPTA", designed_impact_pct=10)
         assert result.status == "PASS", result.comment
         assert "Geometric impact estimate" in result.comment
 
@@ -1014,8 +1043,10 @@ class TestNegativeChecks:
         b["naming_convention"] = sorted(b["naming_convention"]["valid_prefixes"])
         assert a == b
 
-    def test_real_ccfhol_impact_estimate_flags_dead_centre(self, config):
-        """Real CCFhol export collides dead-centre (100%) but protocol says 50% → FAIL."""
+    def test_real_ccfhol_impact_estimate_matches_design(self, config):
+        """Real CCFhol export: with the EuroNCAP position metric (target reference point
+        across VUT width, §1.2.5) the impact is ~50% — matching the designed 50Imp. The
+        old band-overlap metric wrongly read 100% (dead-centre); that was a metric artifact."""
         import pathlib
         xosc_path = pathlib.Path("examples/CCFhol/AEB_CCFhol_30VUT_50GVT_50Imp.xosc")
         if not xosc_path.exists():
@@ -1023,9 +1054,9 @@ class TestNegativeChecks:
         from src.parsers import xosc as xosc_parser
         from src.checks.scenario import check_sc_16
         root = xosc_parser.load(xosc_path)
-        result = check_sc_16(root, config, scenario_tag="CCFhol")
-        assert result.status == "FAIL", result.comment
-        assert "100.0%" in result.comment
+        result = check_sc_16(root, config, scenario_tag="CCFhol", designed_impact_pct=50)
+        assert result.status == "PASS", result.comment
+        assert "50" in result.comment
 
     def test_nm_03_optional_file_absent_still_passes(self, config, tmp_path):
         """NM_03 must PASS even when optional catalog files are absent."""
@@ -1035,6 +1066,9 @@ class TestNegativeChecks:
             (tmp_path / f"{base}{ext}").write_text("dummy")
         for standalone in config.required_standalone_files:
             (tmp_path / standalone).write_text("dummy")
+        for _role, expected, _glob, required in config.associated_files(base):
+            if required:
+                (tmp_path / expected).write_bytes(_workbook_bytes())
         # Do NOT create any of the optional_standalone_files (VehicleCatalog.xosc etc.)
         from src.checks.naming import check_nm_03
         result = check_nm_03(tmp_path, config)
@@ -1280,10 +1314,12 @@ class TestModelReviewSpeedSanity:
 
 
 class TestFunctionalBlock:
-    """CH_FB_01 - TA file provisioning (relabeled from the old CH_MR_01)."""
+    """CH_FB_01 - ENCAP functional / Test-Automation workbook provisioning."""
 
     def test_fb_01_present_parseable_manual_review(self, config, tmp_path):
-        (tmp_path / "TA.xml").write_text("<TA/>", encoding="utf-8")
+        base = "AEB_CCRs_50VUT_0GVT_50Imp"
+        (tmp_path / f"{base}.rrscene").write_text("rrscene", encoding="utf-8")
+        (tmp_path / config.functional_file_name(base)).write_bytes(_workbook_bytes())
         from src.checks.functional_block import check_fb_01
         result = check_fb_01(tmp_path, config)
         assert result.check_id == "CH_FB_01"
@@ -1291,7 +1327,9 @@ class TestFunctionalBlock:
         assert result.status == "MANUAL_REVIEW"
 
     def test_fb_01_empty_file_fails(self, config, tmp_path):
-        (tmp_path / "TA.xml").touch()
+        base = "AEB_CCRs_50VUT_0GVT_50Imp"
+        (tmp_path / f"{base}.rrscene").write_text("rrscene", encoding="utf-8")
+        (tmp_path / config.functional_file_name(base)).touch()  # empty -> not a valid zip
         from src.checks.functional_block import check_fb_01
         result = check_fb_01(tmp_path, config)
         assert result.check_id == "CH_FB_01"

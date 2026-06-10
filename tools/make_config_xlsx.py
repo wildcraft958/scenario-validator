@@ -47,9 +47,18 @@ _KEY_SHEET = {
     "static_target_name_patterns": ("Site Settings", "Name patterns treated as static obstructions (must have speed 0)."),
     "stationary_target_name_patterns": ("Site Settings", "Name patterns for VRU targets that start stationary."),
     "required_file_extensions": ("Site Settings", "File extensions every scenario folder must contain (CH_NM_03)."),
-    "required_standalone_files": ("Site Settings", "Exact filenames that must exist in every scenario folder."),
+    "required_standalone_files": ("Site Settings", "Exact filenames that must exist in every scenario folder (rarely used)."),
     "optional_standalone_files": ("Site Settings", "Files reported if present but never required (e.g. catalogs)."),
-    "junction_scenario_prefixes": ("Site Settings", "Scenario families that require junction geometry checks (RD_03-06, SC_10)."),
+    "allowed_programs": ("Site Settings", "Programs allowed as the 1st filename token, e.g. AEB (CH_NM_02)."),
+    "target_type_tokens": ("Site Settings", "Target-type tokens valid in the 4th filename slot: GVT, EPTa, EPTc, EBTa, EMT (CH_NM_02)."),
+    "vut_speed_suffix": ("Site Settings", "Suffix marking the VUT-speed token in the filename (default VUT)."),
+    "impact_suffix": ("Site Settings", "Suffix marking the impact-overlap token in the filename (default Imp)."),
+    "allowed_impact_overlaps": ("Site Settings", "Impact-overlap %s the filename token may take (CH_NM_02); exact value is checked by SC_16/17."),
+    "functional_file_pattern": ("Site Settings", "ENCAP functional/Test-Automation workbook name; {base} = scenario base name (CH_FB_01)."),
+    "macro_file_pattern": ("Site Settings", "Macro workbook name; {base} = scenario base name (CH_NM_03)."),
+    "review_file_pattern": ("Site Settings", "Manual review checklist name; {base} = scenario base name (optional, being phased out)."),
+    "required_associated_roles": ("Site Settings", "Which affix files are mandatory: functional, macro (review is optional)."),
+    "junction_intersection_min_spread_deg": ("Site Settings", "A junction counts as an intersection (RD_03-06, SC_10) when its incoming roads differ in heading by more than this (deg). Auto-detected from the .xodr - no scenario list."),
     "extra_scenario_prefixes": ("Site Settings", "Extra valid scenario name prefixes that have no row in the Scenarios sheet."),
     "junction_waypoint_radius_m": ("Site Settings", "How close to a junction a waypoint must be to count as 'at the junction'."),
     # tolerances / tuning
@@ -128,18 +137,16 @@ def build_workbook(raw: dict) -> Workbook:
 
     # ---- Scenarios ----
     ws = wb.create_sheet("Scenarios")
-    ws.append(["tag", "type", "vut_min_kmh", "vut_max_kmh", "target_speed_kmh",
-               "impact_overlap_pct", "direction", "has_sov"])
-    _style_header(ws, 8)
-    _autosize(ws, [12, 14, 12, 12, 16, 17, 16, 9])
+    ws.append(["tag", "type", "vut_min_kmh", "vut_max_kmh", "side_impact", "has_sov"])
+    _style_header(ws, 6)
+    _autosize(ws, [12, 14, 12, 12, 12, 9])
     dv_type = DataValidation(type="list", formula1='"longitudinal,crossing,head-on"', allow_blank=False)
     ws.add_data_validation(dv_type)
     for tag, proto in raw.get("scenarios", {}).items():
         speed = proto.get("vut_speed_range_kmh") or [None, None]
         ws.append([
             tag, proto.get("type", "longitudinal"), speed[0], speed[1],
-            proto.get("target_speed_kmh"), proto.get("impact_overlap_pct"),
-            proto.get("direction", ""), bool(proto.get("has_sov", False)),
+            bool(proto.get("side_impact", False)), bool(proto.get("has_sov", False)),
         ])
         dv_type.add(ws.cell(row=ws.max_row, column=2))
 

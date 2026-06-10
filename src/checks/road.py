@@ -66,17 +66,22 @@ def check_rd_02(root: Any, config: Config) -> CheckResult:
     return _make("CH_RD_02", "FAIL", f"Only {count} road segment(s) found - need at least 2")
 
 
-def _is_junction_scenario(scenario_tag: str | None, config: Config) -> bool:
-    """True when the scenario type requires EuroNCAP intersection geometry checks.
+def _junction_geometry_applies(root: Any, config: Config) -> tuple[bool, str]:
+    """Decide whether the intersection geometry checks (RD_03-06) apply — purely from
+    the .xodr, no scenario list. A junction counts as a real EuroNCAP intersection
+    (turning OR straight crossing) when its incoming roads come from different
+    directions; a lane-structure junction that links only parallel roads does not.
 
-    Curved car-to-car following scenarios (CCF*, CCR*, CMR*) use a RoadRunner
-    multi-connection junction element purely for lane structure on a curved road -
-    that is NOT an EuroNCAP intersection and must not trigger the 8 m radius check.
+    Returns (applies, na_reason).
     """
-    if not scenario_tag or not config.junction_scenario_prefixes:
-        return False
-    tag_upper = scenario_tag.upper()
-    return any(tag_upper.startswith(p.upper()) for p in config.junction_scenario_prefixes)
+    if not xodr.has_junctions(root):
+        return False, "No junctions found - check not applicable"
+    if xodr.has_intersection_junction(root, config.junction_intersection_min_spread_deg):
+        return True, ""
+    return False, (
+        "Junction connects only parallel roads (lane structure, not an intersection) "
+        "- intersection geometry check does not apply"
+    )
 
 
 def check_rd_03(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
@@ -94,13 +99,9 @@ def check_rd_03(root: Any, config: Config, scenario_tag: str | None = None) -> C
         (verify Corner Radius = 8 m in the RoadRunner scene; the VUT's driven
         Part-2 radius is independently validated by CH_SC_07).
     """
-    if not xodr.has_junctions(root):
-        return _make("CH_RD_03", "NA", "No junctions found - check not applicable")
-    if not _is_junction_scenario(scenario_tag, config):
-        return _make(
-            "CH_RD_03", "NA",
-            "Not a junction/crossing scenario - curvature radius check does not apply"
-        )
+    applies, na_reason = _junction_geometry_applies(root, config)
+    if not applies:
+        return _make("CH_RD_03", "NA", na_reason)
 
     radii = xodr.junction_curvature_radii(root)
     if not radii:
@@ -145,10 +146,9 @@ def check_rd_04(root: Any, config: Config, scenario_tag: str | None = None) -> C
     the (0,0,0) position of the RoadRunner". Only the POSITION is constrained - the road's
     compass heading is NOT part of this requirement (VUT direction is covered by CH_SC_06).
     """
-    if not xodr.has_junctions(root):
-        return _make("CH_RD_04", "NA", "No junctions - check not applicable")
-    if not _is_junction_scenario(scenario_tag, config):
-        return _make("CH_RD_04", "NA", "Not a junction/crossing scenario - check not applicable")
+    applies, na_reason = _junction_geometry_applies(root, config)
+    if not applies:
+        return _make("CH_RD_04", "NA", na_reason)
 
     origin = xodr.get_leftmost_road_origin(root)
     if origin is None:
@@ -168,10 +168,9 @@ def check_rd_04(root: Any, config: Config, scenario_tag: str | None = None) -> C
 
 def check_rd_05(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """Junction roads must be oriented along VUT direction (entry=start, exit=end)."""
-    if not xodr.has_junctions(root):
-        return _make("CH_RD_05", "NA", "No junctions - check not applicable")
-    if not _is_junction_scenario(scenario_tag, config):
-        return _make("CH_RD_05", "NA", "Not a junction/crossing scenario - check not applicable")
+    applies, na_reason = _junction_geometry_applies(root, config)
+    if not applies:
+        return _make("CH_RD_05", "NA", na_reason)
 
     positions = xodr.get_road_start_end_positions(root)
     if not positions:
@@ -199,10 +198,9 @@ def check_rd_05(root: Any, config: Config, scenario_tag: str | None = None) -> C
 
 def check_rd_06(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """Junction scenario lanes must NOT be on shoulder lane."""
-    if not xodr.has_junctions(root):
-        return _make("CH_RD_06", "NA", "No junctions - check not applicable")
-    if not _is_junction_scenario(scenario_tag, config):
-        return _make("CH_RD_06", "NA", "Not a junction/crossing scenario - check not applicable")
+    applies, na_reason = _junction_geometry_applies(root, config)
+    if not applies:
+        return _make("CH_RD_06", "NA", na_reason)
 
     if xodr.has_shoulder_lane_at_junction(root):
         return _make(

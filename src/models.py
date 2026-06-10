@@ -21,8 +21,10 @@ _LIST_KEYS = {
     "vut_entity_names", "encap_actor_names", "sov_entity_names",
     "static_target_name_patterns", "stationary_target_name_patterns",
     "required_file_extensions", "required_standalone_files",
-    "optional_standalone_files", "junction_scenario_prefixes",
+    "optional_standalone_files",
     "extra_scenario_prefixes",
+    "allowed_programs", "target_type_tokens", "required_associated_roles",
+    "allowed_impact_overlaps",
 }
 
 
@@ -60,18 +62,17 @@ def _read_excel_config(path: Path) -> dict:
                 raw[key] = value
 
     scenarios: dict = {}
+    _truthy = (True, "TRUE", "True", "true", 1)
     for row in wb["Scenarios"].iter_rows(min_row=2, values_only=True):
         if row[0] is None:
             continue
-        tag, typ, vmin, vmax, tspeed, imp, direction, has_sov = (list(row) + [None] * 8)[:8]
-        entry: dict = {"type": str(typ).strip(), "direction": str(direction or "").strip()}
-        if imp is not None:
-            entry["impact_overlap_pct"] = imp
+        tag, typ, vmin, vmax, side_impact, has_sov = (list(row) + [None] * 6)[:6]
+        entry: dict = {"type": str(typ).strip()}
         if vmin is not None and vmax is not None:
             entry["vut_speed_range_kmh"] = [vmin, vmax]
-        if tspeed is not None:
-            entry["target_speed_kmh"] = tspeed
-        if has_sov in (True, "TRUE", "True", "true", 1):
+        if side_impact in _truthy:
+            entry["side_impact"] = True
+        if has_sov in _truthy:
             entry["has_sov"] = True
         scenarios[str(tag).strip()] = entry
     raw["scenarios"] = scenarios
@@ -239,9 +240,12 @@ class SimTimeThreshold(BaseModel):
 class ScenarioProtocol(BaseModel):
     type: Literal["longitudinal", "crossing", "head-on"] = "longitudinal"
     vut_speed_range_kmh: list[float] | None = None
-    target_speed_kmh: float | None = None
+    # Per-instance designed overlap comes from the scenario FILENAME (the Imp token);
+    # this is only a fallback used by CH_SC_16/17 when the filename cannot be parsed.
     impact_overlap_pct: float = 50.0
-    direction: str = "left-to-right"
+    # Side-impact scenarios (CMCscp, CBTAfs, CBTAns) measure impact across the VUT
+    # LENGTH instead of width (EuroNCAP Protocol §1.2.5).
+    side_impact: bool = False
     # True when the scenario includes an SOV (overtaken vehicle) that the protocol
     # permits to be "a GVT or a real vehicle" — drives the CH_SC_22 rename hint.
     has_sov: bool = False
@@ -264,7 +268,7 @@ class Config(BaseModel):
     simulation_time_max_s: float
     impact_tolerance_pct: float
     required_file_extensions: list[str]
-    required_standalone_files: list[str]
+    required_standalone_files: list[str] = []
     vut_entity_names: list[str]
     vehicle_dimensions: dict[str, VehicleDimensions]
     naming_convention: dict
@@ -286,10 +290,12 @@ class Config(BaseModel):
     # Upper bound for plausible entity speeds; speeds above this (or negative) are
     # flagged as garbage/incorrect by CH_MR_01.
     speed_sanity_max_kmh: float = 300.0
-    # Scenario name prefixes that require EuroNCAP junction geometry (CH_RD_03/04/05/06).
-    # Curved-following scenarios (CCF*) have junction elements in their xodr for lane
-    # structure, not intersections - those checks must be skipped for them.
-    junction_scenario_prefixes: list[str] = []
+    # Junction detection (CH_RD_03-06, CH_SC_10) is fully file-based — no scenario list.
+    # A junction is treated as a real EuroNCAP intersection (turning OR straight crossing)
+    # when its incoming roads come from different directions: any two incoming-road headings
+    # differing by more than this many degrees. Lane-structure/transition junctions connect
+    # parallel roads (spread ~0) and are excluded.
+    junction_intersection_min_spread_deg: float = 30.0
     # ---- Geometry tolerances (previously hardcoded in check logic) ----
     # CH_SC_05: how close to east (0 deg) a WorldPosition heading must be before the
     # negative-y = right-lane heuristic is applied.
@@ -320,6 +326,32 @@ class Config(BaseModel):
     # the SOV (vehicle overtaken by VUT in CCFhol) "can either be a GVT or a real vehicle",
     # so a non-NCAP asset path is protocol-legal for it.
     sov_entity_names: list[str] = ["SOV"]
+    # ---- Scenario filename grammar (CH_NM_02) ----
+    # The team names every scenario base as:
+    #   <program>_<type>_<n>VUT_<n><TargetType>_<n>Imp   e.g. AEB_CCFtap_10VUT_30GVT_50Imp
+    # These knobs let NM_02 validate that structure (and cross-check the values) without
+    # any code edit when the convention grows.
+    allowed_programs: list[str] = ["AEB"]
+    target_type_tokens: list[str] = []          # GVT / EPTa / EPTc / EBTa / EMT / ...
+    # Expected OpenSCENARIO entity category for each filename target token — lets CH_NM_02
+    # catch a mislabeled filename (e.g. "30GVT" on a scenario whose target is a pedestrian).
+    target_type_to_category: dict[str, str] = Field(default_factory=lambda: {
+        "GVT": "Vehicle", "SOV": "Vehicle",
+        "EPTa": "Pedestrian", "EPTc": "Pedestrian",
+        "EBTa": "Bicyclist", "EMT": "Motorcyclist",
+    })
+    vut_speed_suffix: str = "VUT"
+    impact_suffix: str = "Imp"
+    # Impact-overlap is a protocol *variant* parameter (10/25/50/75/90 ...). NM_02 checks the
+    # filename token is one of these; exact-overlap correctness stays with CH_SC_16/17.
+    allowed_impact_overlaps: list[float] = [0, 10, 25, 50, 75, 90, 100]
+    # ---- Associated / affix files (CH_NM_03, CH_FB_01) ----
+    # Files that ship beside the 7 base-named files, named with a fixed affix around {base}.
+    functional_file_pattern: str = "ENCAP_Scenario_func_{base}.xlsm"
+    macro_file_pattern: str = "MACRO_{base}.xlsx"
+    review_file_pattern: str = "{base}_Review.xlsx"
+    # Which associated-file roles are mandatory (the rest are reported but never FAIL).
+    required_associated_roles: list[str] = ["functional", "macro"]
 
     @classmethod
     def load(cls, path: Path | None = None) -> Config:
@@ -398,3 +430,27 @@ class Config(BaseModel):
             if key.lower() in entity_name.lower():
                 return self.vehicle_dimensions[key]
         return self.vehicle_dimensions["default_car"]
+
+    def associated_files(self, base: str) -> list[tuple[str, str, str, bool]]:
+        """Resolve the affix files for a scenario base name.
+
+        Returns (role, expected_name, glob, required) per role. `expected_name`
+        has {base} substituted; `glob` substitutes `*` so the file can be
+        auto-detected even when the base segment drifts or the config is stale
+        (so a misnamed-but-present file is found, not short-circuited to missing).
+        """
+        patterns = [
+            ("functional", self.functional_file_pattern),
+            ("macro", self.macro_file_pattern),
+            ("review", self.review_file_pattern),
+        ]
+        return [
+            (role, pattern.format(base=base), pattern.replace("{base}", "*"),
+             role in self.required_associated_roles)
+            for role, pattern in patterns
+            if pattern
+        ]
+
+    def functional_file_name(self, base: str) -> str:
+        """Resolved name of the functional / Test-Automation workbook for CH_FB_01."""
+        return self.functional_file_pattern.format(base=base)

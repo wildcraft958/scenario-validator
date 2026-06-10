@@ -110,9 +110,20 @@ def _rd() -> bytes:
 </Routes>"""
 
 
+def _workbook_bytes() -> bytes:
+    """Minimal valid OOXML (zip) so CH_FB_01's zipfile check treats it as a workbook."""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("[Content_Types].xml", "<Types/>")
+    return buf.getvalue()
+
+
 def create_scenario(
     base_dir: Path,
-    name: str = "CCRs_70kph",
+    name: str = "AEB_CCRs_50VUT_0GVT_50Imp",
     *,
     lane_width: str = "3.50",
     vut_speed_ms: str = "13.89",
@@ -134,8 +145,10 @@ def create_scenario(
         (scenario_dir / f"{base_override.get('rd', base)}.rd").write_bytes(_rd())
     (scenario_dir / f"{base_override.get('xml', base)}.xml").write_text("<ScenarioMeta/>", encoding="utf-8")
     (scenario_dir / f"{base_override.get('txt', base)}.txt").write_text("notes", encoding="utf-8")
+    # Macro workbook is always required; the ENCAP functional workbook is toggled by include_ta.
+    (scenario_dir / f"MACRO_{base}.xlsx").write_bytes(_workbook_bytes())
     if include_ta:
-        (scenario_dir / "TA.xml").write_text("<TA/>", encoding="utf-8")
+        (scenario_dir / f"ENCAP_Scenario_func_{base}.xlsm").write_bytes(_workbook_bytes())
     return scenario_dir
 
 
@@ -210,7 +223,8 @@ def test_no_rd_mode_skips_cleanly(tmp_path: Path) -> None:
     result = run_cli(scenario_dir, out, "--no-rd")
     assert result.returncode == 0, result.stdout + result.stderr
     rows = validation_rows(latest_xlsx(out))
-    assert rows["CH_NM_07"] == "NA"
+    # .rd handling folded into CH_NM_03: all other required files present -> Yes under --no-rd.
+    assert rows["CH_NM_03"] == "Yes"
     assert rows["CH_MD_01"] == "NA"
 
 
@@ -220,7 +234,8 @@ def test_missing_rd_without_no_rd_fails(tmp_path: Path) -> None:
     result = run_cli(scenario_dir, out)
     assert result.returncode == 1
     rows = validation_rows(latest_xlsx(out))
-    assert rows["CH_NM_07"] == "No"
+    # missing .rd is reported by CH_NM_03 (old CH_NM_07 folded in)
+    assert rows["CH_NM_03"] == "No"
     assert rows["CH_MD_02"] == "No"
 
 
@@ -245,8 +260,8 @@ def test_base_name_mismatch_detected(tmp_path: Path) -> None:
     result = run_cli(scenario_dir, out)
     assert result.returncode == 1
     rows = validation_rows(latest_xlsx(out))
+    # base-name mismatch + duplicate/case detection folded into CH_NM_04
     assert rows["CH_NM_04"] == "No"
-    assert rows["CH_NM_06"] == "No"
 
 
 def test_quiet_suppresses_console_but_writes_log(tmp_path: Path) -> None:
@@ -291,10 +306,14 @@ def test_security_payloads_are_not_expanded(tmp_path: Path) -> None:
     except Exception:
         pass
 
-    ta_dir = tmp_path / "ta"
-    ta_dir.mkdir()
-    (ta_dir / "TA.xml").write_bytes(xxe.replace(b"OpenSCENARIO", b"TA"))
-    result = check_fb_01(ta_dir, Config.load(CONFIG))
+    # CH_FB_01 must never XML-parse the functional workbook (it is a zip/OOXML), so an
+    # XXE payload disguised as the functional file is rejected as "not a valid workbook",
+    # never expanded.
+    func_dir = tmp_path / "func"
+    func_dir.mkdir()
+    (func_dir / "func.rrscene").write_text("rrscene", encoding="utf-8")
+    (func_dir / "ENCAP_Scenario_func_func.xlsm").write_bytes(xxe.replace(b"OpenSCENARIO", b"TA"))
+    result = check_fb_01(func_dir, Config.load(CONFIG))
     assert result.status in {"FAIL", "MANUAL_REVIEW"}
 
 
