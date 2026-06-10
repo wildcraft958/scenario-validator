@@ -1,20 +1,13 @@
 """CH_SC_01 through CH_SC_22 - Scenario checks (from .xosc + .xodr)."""
 from __future__ import annotations
 
-import logging
 import math
 from typing import Any
 
-from ..geometry import (
-    VehicleState,
-    compute_impact_percentage,
-    estimate_trajectory_impact,
-    paths_intersect,
-)
-from ..models import CheckResult, Config
+from ..geometry import estimate_trajectory_impact, paths_intersect
+from ..models import CheckResult, CheckStatus, Config
 from ..parsers import xosc, xodr
-
-log = logging.getLogger(__name__)
+from .naming import detect_scenario_tag
 
 CATEGORY = "Scenario"
 
@@ -44,27 +37,30 @@ _DESCRIPTIONS = {
 }
 
 
-def _make(check_id: str, status: str, comment: str = "") -> CheckResult:
+def _make(check_id: str, status: CheckStatus, comment: str = "") -> CheckResult:
     return CheckResult(
         check_id=check_id,
         category=CATEGORY,
         description=_DESCRIPTIONS[check_id],
-        status=status,  # type: ignore[arg-type]
+        status=status,
         comment=comment,
     )
 
 
 def _detect_scenario_tag(xosc_root: Any, config: Config) -> str | None:
-    """Detect EuroNCAP scenario type from scenario name or parameters."""
-    name = xosc.get_scenario_name(xosc_root).upper()
-    for prefix in config.naming_convention["valid_prefixes"]:
-        if prefix.upper() in name:
-            return prefix
-    params = xosc.get_parameter_declarations(xosc_root)
-    for p in params:
-        for prefix in config.naming_convention["valid_prefixes"]:
-            if prefix.upper() in p["name"].upper() or prefix.upper() in p["value"].upper():
-                return prefix
+    """Detect the EuroNCAP scenario tag from the .xosc scenario name or its parameters.
+
+    The prefix matching is delegated to naming.detect_scenario_tag (the single source of
+    truth, longest-prefix first); only the RoadRunner-specific fallback to parameter
+    declarations lives here.
+    """
+    tag = detect_scenario_tag(xosc.get_scenario_name(xosc_root), config)
+    if tag:
+        return tag
+    for p in xosc.get_parameter_declarations(xosc_root):
+        tag = detect_scenario_tag(p["name"], config) or detect_scenario_tag(p["value"], config)
+        if tag:
+            return tag
     return None
 
 
@@ -692,45 +688,29 @@ def check_sc_15(xosc_root: Any, config: Config) -> CheckResult:
     return _make("CH_SC_15", "FAIL", "; ".join(r.comment for r in fails) + suffix)
 
 
-def _get_impact_percentage(
-    xosc_root: Any, config: Config, scenario_type: str
-) -> tuple[float | None, str]:
-    """Computes impact percentage for the scenario. Returns (pct, debug_msg)."""
+def _synth_straight_trajectory(
+    xosc_root: Any, config: Config, name: str, horizon_s: float = 20.0
+) -> list[dict]:
+    """Build a 2-vertex straight trajectory from an entity's Init pose + speed.
+
+    Parametric scenarios (no Init FollowTrajectoryAction) carry no path, so this
+    synthesises one: the actor travels in a straight line along its Init heading at
+    its Init speed. That lets the SAME §1.2.5 impact estimator (estimate_trajectory_impact)
+    run on parametric scenarios — there is no second, divergent impact metric.
+    """
     positions = xosc.get_init_positions(xosc_root)
-    vut_name = _identify_vut(xosc_root, config)
-    targets = _identify_targets(xosc_root, config)
-
-    if not vut_name or not targets or vut_name not in positions:
-        return None, "Could not identify VUT or target positions"
-
-    target_name = targets[0]
-    if target_name not in positions:
-        return None, f"Target '{target_name}' has no Init position"
-
-    vp = positions[vut_name]
-    tp = positions[target_name]
-
-    vut_dims = config.vut_dims()
-    tgt_dims = config.target_dims(target_name)
-
-    vut_speed = xosc.get_init_speed(xosc_root, vut_name) or 0.0
-    tgt_speed = xosc.get_init_speed(xosc_root, target_name) or 0.0
-
-    vut_state = VehicleState(
-        x=vp["x"], y=vp["y"],
-        heading_deg=math.degrees(vp.get("h", 0.0)),
-        length=vut_dims.length, width=vut_dims.width,
-        speed_ms=vut_speed,
-    )
-    tgt_state = VehicleState(
-        x=tp["x"], y=tp["y"],
-        heading_deg=math.degrees(tp.get("h", 0.0)),
-        length=tgt_dims.length, width=tgt_dims.width,
-        speed_ms=tgt_speed,
-    )
-
-    pct = compute_impact_percentage(vut_state, tgt_state, scenario_type)
-    return pct, f"VUT='{vut_name}', Target='{target_name}'"
+    if name not in positions:
+        return []
+    p = positions[name]
+    h = p.get("h", 0.0)
+    speed = xosc.get_init_speed(xosc_root, name) or 0.0
+    x0, y0 = p["x"], p["y"]
+    return [
+        {"time": 0.0, "x": x0, "y": y0, "h": h},
+        {"time": horizon_s,
+         "x": x0 + math.cos(h) * speed * horizon_s,
+         "y": y0 + math.sin(h) * speed * horizon_s, "h": h},
+    ]
 
 
 def _entity_bbox(xosc_root: Any, config: Config, name: str) -> tuple[float, float, float, float]:
@@ -742,35 +722,43 @@ def _entity_bbox(xosc_root: Any, config: Config, name: str) -> tuple[float, floa
     return (0.0, 0.0, dims.length, dims.width)
 
 
-def _kinematic_impact_verdict(
+def _impact_verdict(
     xosc_root: Any, config: Config, vut: str,
     expected: float, tolerance: float, check_id: str,
     side_impact: bool = False,
 ) -> CheckResult:
-    """Impact % estimation for RoadRunner kinematic exports — the validator's USP.
+    """Estimate the designed impact location (§1.2.5) and grade it against `expected`.
 
-    The exported trajectories are the UNBRAKED design paths (AEB only exists in the
-    real/HIL test), so stepping both actors through time with their exported bounding
-    boxes finds the designed first-contact geometry. Gives pre-HIL design feedback
-    that the RoadRunner GUI cannot show.
+    The validator's USP — pre-HIL design feedback the RoadRunner GUI cannot show.
+    Primary path: RoadRunner kinematic exports are the UNBRAKED design paths (AEB only
+    exists in the real/HIL test), so stepping both actors' exported trajectories +
+    bounding boxes to the designed first-contact instant gives the impact geometry.
+    Parametric scenarios carry no path, so a straight trajectory is SYNTHESISED from
+    each actor's Init pose + speed (see _synth_straight_trajectory) — the SAME §1.2.5
+    metric, never a second divergent one.
 
-    Metric = EuroNCAP impact location (§1.2.5): the target reference point projected
-    onto the VUT WIDTH (0%=right edge, 100%=left); for side-impact scenarios (CMCscp,
-    CBTAfs, CBTAns) onto the VUT LENGTH (0%=rear, 100%=front). The near/far-side variant
-    can measure from the opposite edge, so the estimate is matched against whichever
-    edge is closer to the designed value and both edges are reported for review.
+    Metric (§1.2.5, directional): the target reference point across the VUT WIDTH
+    (0% = outer right edge, 100% = outer left); side-impact scenarios (CMCscp, CBTAfs,
+    CBTAns) across the VUT LENGTH (0% = rear, 100% = front). The estimate is compared
+    STRAIGHT to the designed %, both in the 0%=right/rear convention (no min() fold —
+    a mirror-image design error must FAIL, not be silently matched to the near edge).
     """
     targets = _identify_targets(xosc_root, config)
     if not targets:
         return _make(
             check_id, "MANUAL_REVIEW",
-            f"Kinematic trajectory but no target entity identified. Expected ~{expected}% "
-            f"±{tolerance}% per protocol — verify in RoadRunner.",
+            f"No target entity identified. Expected ~{expected}% ±{tolerance}% per "
+            f"protocol — verify in RoadRunner.",
         )
     tgt = targets[0]
-    vut_verts = xosc.get_trajectory_vertices(xosc_root, vut)
-    tgt_verts = xosc.get_trajectory_vertices(xosc_root, tgt)
     category = xosc.get_entity_category(xosc_root, tgt) or "Vehicle"
+    synthesised = not xosc.has_init_follow_trajectory(xosc_root, vut)
+    if synthesised:
+        vut_verts = _synth_straight_trajectory(xosc_root, config, vut)
+        tgt_verts = _synth_straight_trajectory(xosc_root, config, tgt)
+    else:
+        vut_verts = xosc.get_trajectory_vertices(xosc_root, vut)
+        tgt_verts = xosc.get_trajectory_vertices(xosc_root, tgt)
 
     est = estimate_trajectory_impact(
         vut_verts, tgt_verts,
@@ -779,11 +767,10 @@ def _kinematic_impact_verdict(
         target_category=category,
     )
     if est is None:
-        # Degenerate data — fall back to the path-intersection note
         return _make(
             check_id, "MANUAL_REVIEW",
-            f"Kinematic trajectory — could not step trajectories (missing/empty vertex data). "
-            f"Expected ~{expected}% ±{tolerance}% per protocol. Verify in RoadRunner."
+            f"Could not estimate impact (missing/empty trajectory data). Expected "
+            f"~{expected}% ±{tolerance}% per protocol. Verify in RoadRunner."
             + _collision_course_note(xosc_root, config, vut),
         )
 
@@ -792,48 +779,50 @@ def _kinematic_impact_verdict(
         return _make(
             check_id, "FAIL",
             f"Impact estimate: VUT and {tgt} bounding boxes NEVER meet along the design "
-            f"trajectories (closest approach {gap}). Expected ~{expected}% impact — the "
-            f"scenario timing/lateral design does not produce the collision. Adjust in RoadRunner.",
+            f"paths (closest approach {gap}). Expected ~{expected}% impact — the scenario "
+            f"timing/lateral design does not produce the collision. Adjust in RoadRunner.",
         )
 
-    axis_pct = est.impact_pct_length if side_impact else est.impact_pct_width
+    computed = est.impact_pct_length if side_impact else est.impact_pct_width
     axis = "length (rear 0% → front 100%)" if side_impact else "width (right 0% → left 100%)"
-    if axis_pct is None:
-        computed, metric = None, "n/a"
-    else:
-        # EuroNCAP fixes 0%=right/rear, but near/far-side variants can be measured from
-        # the opposite edge — match against whichever edge is closer to the designed value.
-        computed = min((axis_pct, 100.0 - axis_pct), key=lambda p: abs(p - expected))
-        metric = f"impact location {axis_pct:.0f}% across VUT {axis}"
+    if computed is None:
+        return _make(
+            check_id, "MANUAL_REVIEW",
+            f"Contact found but the impact axis is indeterminate. Expected ~{expected}% "
+            f"±{tolerance}%. Verify in RoadRunner.",
+        )
+    src = ("synthesised straight paths from Init pose+speed" if synthesised
+           else "unbraked design trajectories + exported bounding boxes")
+    side_note = (" (side-impact length axis — unvalidated locally; no CMCscp/CBTAfs/CBTAns "
+                 "example exists, confirm in HIL)" if side_impact else "")
     detail = (
         f"first contact t={est.t_contact:.2f}s, lateral offset {est.lateral_offset_m:+.2f} m, "
         f"relative heading {est.rel_heading_deg:.0f}°"
     )
     basis = (
-        "Computed from unbraked design trajectories + exported bounding boxes "
-        "(no AEB in the scenario by design) — confirm in HIL."
+        f"Computed from {src} (no AEB by design); §1.2.5 impact location across VUT "
+        f"{axis}{side_note} — confirm in HIL."
     )
-    if computed is not None and abs(computed - expected) <= tolerance:
+    if abs(computed - expected) <= tolerance:
         return _make(
             check_id, "PASS",
-            f"Geometric impact estimate {computed:.1f}% [{metric}] matches protocol "
-            f"{expected:.0f}% ±{tolerance:.0f}% ({detail}). {basis}",
+            f"Geometric impact estimate {computed:.1f}% matches protocol {expected:.0f}% "
+            f"±{tolerance:.0f}% ({detail}). {basis}",
         )
     return _make(
         check_id, "FAIL",
-        f"Geometric impact estimate {computed:.1f}% [{metric}] — expected {expected:.0f}% "
-        f"±{tolerance:.0f}% ({detail}). The design trajectories do not produce the intended "
-        f"impact point; adjust the scenario in RoadRunner before HIL. {basis}",
+        f"Geometric impact estimate {computed:.1f}% — expected {expected:.0f}% "
+        f"±{tolerance:.0f}% ({detail}). The design does not produce the intended impact "
+        f"point; adjust the scenario in RoadRunner before HIL. {basis}",
     )
 
 
 def _collision_course_note(xosc_root: Any, config: Config, vut: str) -> str:
     """Time-decoupled path-intersection test for kinematic scenarios.
 
-    The overlap % is NOT derivable from kinematic exports (trajectories end before
-    any collision because AEB intervenes in the real test), but whether the two
-    designed PATHS intersect is pure geometry — automatable. Returns a note for
-    the MANUAL_REVIEW comment.
+    The impact % itself IS estimated geometrically by _impact_verdict; this is only
+    the fallback note used when that estimate cannot be computed — whether the two
+    designed PATHS intersect is pure geometry. Returns a note for the comment.
     """
     targets = _identify_targets(xosc_root, config)
     if not targets:
@@ -860,12 +849,10 @@ def check_sc_16(
 ) -> CheckResult:
     """Impact % for turning/crossing ≈ protocol value (±5%).
 
-    USP: for RoadRunner kinematic exports the validator steps both actors through their
-    UNBRAKED design trajectories with the exported bounding boxes and computes the impact
-    geometry at the designed first contact (see _kinematic_impact_verdict). This gives
-    pre-HIL design verification the RoadRunner GUI cannot show. For parametric scenarios
-    it falls back to the Init-position bounding-box projection. HIL remains the final
-    authority (official checklist: "final tuning should be done in HIL").
+    USP: the validator estimates the designed §1.2.5 impact location (see _impact_verdict)
+    — from the exported trajectories for RoadRunner kinematic scenarios, or from a straight
+    trajectory synthesised from Init pose+speed for parametric ones. Pre-HIL design
+    verification the RoadRunner GUI cannot show; HIL remains the final authority.
     """
     tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
     proto = config.scenario_protocol(tag) if tag else None
@@ -878,30 +865,12 @@ def check_sc_16(
     expected = designed_impact_pct if designed_impact_pct is not None else proto.impact_overlap_pct
     tolerance = config.impact_tolerance_pct
     vut = _identify_vut(xosc_root, config)
-
-    if vut and xosc.has_init_follow_trajectory(xosc_root, vut):
-        # RoadRunner kinematic format: the trajectories are the UNBRAKED design
-        # paths — estimate the designed impact geometry directly (USP).
-        return _kinematic_impact_verdict(
-            xosc_root, config, vut, expected, tolerance, "CH_SC_16",
-            side_impact=proto.side_impact,
-        )
-
-    pct, msg = _get_impact_percentage(xosc_root, config, proto.type)
-    if pct is None:
-        return _make("CH_SC_16", "MANUAL_REVIEW", msg)
-
-    if abs(pct - expected) <= tolerance:
-        return _make(
-            "CH_SC_16",
-            "PASS",
-            f"Impact overlap = {pct:.1f}% (expected {expected}% ±{tolerance}%). "
-            f"{msg}. Note: final tuning must be done in HILs.",
-        )
-    return _make(
-        "CH_SC_16",
-        "FAIL",
-        f"Impact overlap = {pct:.1f}% — expected {expected}% ±{tolerance}%. {msg}",
+    if not vut:
+        return _make("CH_SC_16", "MANUAL_REVIEW",
+                     "Could not identify the VUT entity to estimate impact geometry.")
+    return _impact_verdict(
+        xosc_root, config, vut, expected, tolerance, "CH_SC_16",
+        side_impact=proto.side_impact,
     )
 
 
@@ -909,10 +878,10 @@ def check_sc_17(
     xosc_root: Any, config: Config, scenario_tag: str | None = None,
     designed_impact_pct: float | None = None,
 ) -> CheckResult:
-    """Impact % for longitudinal must exactly match protocol value (±1%).
+    """Impact % for longitudinal must match the protocol value (±1%).
 
-    USP: same trajectory-stepped impact estimation as CH_SC_16 but for longitudinal
-    scenarios with the stricter ±1% tolerance (see check_sc_16 docstring).
+    USP: same §1.2.5 impact estimation as CH_SC_16 (see _impact_verdict) but for
+    longitudinal / head-on scenarios with the stricter ±1% tolerance.
     """
     tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
     proto = config.scenario_protocol(tag) if tag else None
@@ -924,27 +893,12 @@ def check_sc_17(
     expected = designed_impact_pct if designed_impact_pct is not None else proto.impact_overlap_pct
     tolerance = config.longitudinal_impact_tolerance_pct
     vut = _identify_vut(xosc_root, config)
-
-    if vut and xosc.has_init_follow_trajectory(xosc_root, vut):
-        return _kinematic_impact_verdict(
-            xosc_root, config, vut, expected, tolerance, "CH_SC_17",
-            side_impact=proto.side_impact,
-        )
-
-    pct, msg = _get_impact_percentage(xosc_root, config, proto.type)
-    if pct is None:
-        return _make("CH_SC_17", "MANUAL_REVIEW", msg)
-
-    if abs(pct - expected) <= tolerance:
-        return _make(
-            "CH_SC_17",
-            "PASS",
-            f"Longitudinal impact overlap = {pct:.1f}% (expected {expected}% ±{tolerance}%). {msg}",
-        )
-    return _make(
-        "CH_SC_17",
-        "FAIL",
-        f"Longitudinal impact overlap = {pct:.1f}% — expected {expected}% (±{tolerance}% tolerance). {msg}",
+    if not vut:
+        return _make("CH_SC_17", "MANUAL_REVIEW",
+                     "Could not identify the VUT entity to estimate impact geometry.")
+    return _impact_verdict(
+        xosc_root, config, vut, expected, tolerance, "CH_SC_17",
+        side_impact=proto.side_impact,
     )
 
 

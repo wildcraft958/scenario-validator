@@ -11,19 +11,16 @@ Consolidated set (CH_NM_01..05):
 """
 from __future__ import annotations
 
-import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..models import CheckResult, Config
-
-log = logging.getLogger(__name__)
+from ..models import CheckResult, CheckStatus, Config
 
 CATEGORY = "Naming"
 
 
-def _make(check_id: str, status: str, comment: str = "") -> CheckResult:
+def _make(check_id: str, status: CheckStatus, comment: str = "") -> CheckResult:
     descriptions = {
         "CH_NM_01": "Actor names inside scenario follow EuroNCAP convention (VUT=Ego/VUT/Vehicle, targets=GVT/EPTa/EBTa/EPTc/EMT/SOV etc.)",
         "CH_NM_02": "Scenario name follows program_type_<n>VUT_<n><Target>_<n>Imp and its values agree with the protocol",
@@ -35,7 +32,7 @@ def _make(check_id: str, status: str, comment: str = "") -> CheckResult:
         check_id=check_id,
         category=CATEGORY,
         description=descriptions[check_id],
-        status=status,  # type: ignore[arg-type]
+        status=status,
         comment=comment,
         source_file="scenario directory",
     )

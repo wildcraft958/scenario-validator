@@ -1,4 +1,4 @@
-"""Excel and CSV reporter for EuroNCAP scenario validation results.
+"""Excel reporter for EuroNCAP scenario validation results.
 
 Sheet 1: Validation   - one row per check
 Sheet 2: Issues Log   - failed checks only
@@ -6,7 +6,6 @@ Sheet 3: Run Summary  - aggregate stats and audit metadata
 """
 from __future__ import annotations
 
-import csv
 import logging
 from pathlib import Path
 
@@ -45,17 +44,6 @@ _VALIDATION_HEADERS = [
     "Check name",
     "Result",
     "Comment",
-    "Source file",
-    "Severity",
-    "Automatable or Manual",
-    "Timestamp",
-]
-# CSV omits the Comment column — comments contain proprietary check logic details.
-_CSV_HEADERS = [
-    "Check ID",
-    "Category",
-    "Check name",
-    "Result",
     "Source file",
     "Severity",
     "Automatable or Manual",
@@ -121,16 +109,11 @@ def write_excel(
     results: list[CheckResult],
     stats: SummaryStats,
     output_path: Path,
-    template_path: Path | None = None,
 ) -> Path:
     """Write full Excel report. Returns path of written file."""
-    if template_path and template_path.exists():
-        wb = openpyxl.load_workbook(template_path)
-        log.info("Loaded template from %s", template_path)
-    else:
-        wb = openpyxl.Workbook()
-        if "Sheet" in wb.sheetnames:
-            del wb["Sheet"]
+    wb = openpyxl.Workbook()
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
 
     for sheet_name in ("Validation", "Issues Log", "Run Summary"):
         if sheet_name in wb.sheetnames:
@@ -191,7 +174,6 @@ def write_excel(
         ("Scenario Name", stats.scenario_name),
         ("Run Timestamp", stats.run_timestamp),
         ("Config Path", stats.config_path),
-        ("Template Path", stats.template_path or "None"),
         ("Protocol Version", stats.protocol_version),
         ("Total Checks", stats.total),
         ("Yes Count", stats.passed),
@@ -226,18 +208,6 @@ def write_excel(
 
     wb.save(output_path)
     log.info("Excel report written to %s", output_path)
-    return output_path
-
-
-def write_csv(results: list[CheckResult], stats: SummaryStats, output_path: Path) -> Path:
-    """Write validation results to CSV — Comment column excluded (proprietary)."""
-    with output_path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.writer(fh)
-        writer.writerow(_CSV_HEADERS)
-        for r in results:
-            writer.writerow(r.as_csv_row())
-
-    log.info("CSV report written to %s", output_path)
     return output_path
 
 

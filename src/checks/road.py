@@ -1,14 +1,11 @@
 """CH_RD_01 through CH_RD_06 - Road layout checks (from .xodr)."""
 from __future__ import annotations
 
-import logging
 import math
 from typing import Any
 
-from ..models import CheckResult, Config
+from ..models import CheckResult, CheckStatus, Config
 from ..parsers import xodr
-
-log = logging.getLogger(__name__)
 
 CATEGORY = "Road"
 
@@ -16,18 +13,18 @@ _DESCRIPTIONS = {
     "CH_RD_01": "Lane width = 3.5 m (EuroNCAP standard) and road markings present (straight alignment is visual check)",
     "CH_RD_02": "Road has >= 2 segments (trajectory coverage of both segments requires manual check)",
     "CH_RD_03": "Junction curvature radius maintained at 8 m",
-    "CH_RD_04": "Junction scenarios: leftmost road starts at (0,0,0) heading east (0°) in RoadRunner coordinates",
+    "CH_RD_04": "Junction scenarios: leftmost road starts at the RoadRunner origin (0,0,0) position",
     "CH_RD_05": "Junction road heading aligned with east/west (VUT entry/exit alignment requires manual check)",
     "CH_RD_06": "Junction lanes on main driving lane, NOT shoulder lane",
 }
 
 
-def _make(check_id: str, status: str, comment: str = "") -> CheckResult:
+def _make(check_id: str, status: CheckStatus, comment: str = "") -> CheckResult:
     return CheckResult(
         check_id=check_id,
         category=CATEGORY,
         description=_DESCRIPTIONS[check_id],
-        status=status,  # type: ignore[arg-type]
+        status=status,
         comment=comment,
     )
 
@@ -84,7 +81,7 @@ def _junction_geometry_applies(root: Any, config: Config) -> tuple[bool, str]:
     )
 
 
-def check_rd_03(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
+def check_rd_03(root: Any, config: Config) -> CheckResult:
     """Junction curvature radius should be 8 m (kerb/corner radius).
 
     The 8 m spec is the junction CORNER (kerb fillet) radius set in RoadRunner.
@@ -138,7 +135,7 @@ def check_rd_03(root: Any, config: Config, scenario_tag: str | None = None) -> C
     )
 
 
-def check_rd_04(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
+def check_rd_04(root: Any, config: Config) -> CheckResult:
     """For junction scenarios with static objects at the intersection: the leftmost road
     must start at the RoadRunner origin (0, 0, 0).
 
@@ -166,7 +163,7 @@ def check_rd_04(root: Any, config: Config, scenario_tag: str | None = None) -> C
     )
 
 
-def check_rd_05(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
+def check_rd_05(root: Any, config: Config) -> CheckResult:
     """Junction roads must be oriented along VUT direction (entry=start, exit=end)."""
     applies, na_reason = _junction_geometry_applies(root, config)
     if not applies:
@@ -196,7 +193,7 @@ def check_rd_05(root: Any, config: Config, scenario_tag: str | None = None) -> C
     )
 
 
-def check_rd_06(root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
+def check_rd_06(root: Any, config: Config) -> CheckResult:
     """Junction scenario lanes must NOT be on shoulder lane."""
     applies, na_reason = _junction_geometry_applies(root, config)
     if not applies:
@@ -212,12 +209,12 @@ def check_rd_06(root: Any, config: Config, scenario_tag: str | None = None) -> C
     return _make("CH_RD_06", "PASS")
 
 
-def run_all(xodr_root: Any, config: Config, scenario_tag: str | None = None) -> list[CheckResult]:
+def run_all(xodr_root: Any, config: Config) -> list[CheckResult]:
     return [
         check_rd_01(xodr_root, config),
         check_rd_02(xodr_root, config),
-        check_rd_03(xodr_root, config, scenario_tag),
-        check_rd_04(xodr_root, config, scenario_tag),
-        check_rd_05(xodr_root, config, scenario_tag),
-        check_rd_06(xodr_root, config, scenario_tag),
+        check_rd_03(xodr_root, config),
+        check_rd_04(xodr_root, config),
+        check_rd_05(xodr_root, config),
+        check_rd_06(xodr_root, config),
     ]

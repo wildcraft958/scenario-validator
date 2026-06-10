@@ -7,6 +7,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
+# The four verdict states every check returns. Shared so each check module's _make()
+# helper can type its `status` parameter without a per-call type: ignore.
+CheckStatus = Literal["PASS", "FAIL", "NA", "MANUAL_REVIEW"]
+
 
 class ConfigError(Exception):
     """Configuration problem with a user-facing, plain-language message.
@@ -105,7 +109,7 @@ class CheckResult(BaseModel):
     check_id: str
     category: str
     description: str
-    status: Literal["PASS", "FAIL", "NA", "MANUAL_REVIEW"]
+    status: CheckStatus
     comment: str = ""
     source_file: str = ""
     severity: str = "Medium"
@@ -144,19 +148,6 @@ class CheckResult(BaseModel):
             self.timestamp,
         ]
 
-    def as_csv_row(self) -> list[str]:
-        """Row WITHOUT Comment — for CSV export (Comment is proprietary)."""
-        return [
-            self.check_id,
-            self.category,
-            self.description,
-            self.result,
-            self.source_file,
-            self.severity,
-            self.automatable_or_manual,
-            self.timestamp,
-        ]
-
 
 class SummaryStats(BaseModel):
     scenario_name: str
@@ -171,7 +162,6 @@ class SummaryStats(BaseModel):
     critical_failures: list[str]
     scenario_dir: str = ""
     config_path: str = ""
-    template_path: str = ""
     cli_command: str = ""
     final_status: str = ""
     automatable_total: int = 0
@@ -187,7 +177,6 @@ class SummaryStats(BaseModel):
         protocol_version: str,
         scenario_dir: str = "",
         config_path: str = "",
-        template_path: str = "",
         cli_command: str = "",
     ) -> SummaryStats:
         passed = sum(1 for r in results if r.status == "PASS")
@@ -217,7 +206,6 @@ class SummaryStats(BaseModel):
             critical_failures=critical,
             scenario_dir=scenario_dir,
             config_path=config_path,
-            template_path=template_path,
             cli_command=cli_command,
             final_status="FAIL" if failed else "PASS",
             automatable_total=automatable_total,
@@ -238,6 +226,10 @@ class SimTimeThreshold(BaseModel):
 
 
 class ScenarioProtocol(BaseModel):
+    # INTERNAL impact-tolerance routing key, NOT the EuroNCAP Scenario-Type taxonomy
+    # (Longitudinal/Turning/Crossing). It only routes the impact check: 'crossing' ->
+    # CH_SC_16 (±5%); 'longitudinal'/'head-on' -> CH_SC_17 (±1%). The impact AXIS
+    # (width vs length) is the separate side_impact flag, not this field.
     type: Literal["longitudinal", "crossing", "head-on"] = "longitudinal"
     vut_speed_range_kmh: list[float] | None = None
     # Per-instance designed overlap comes from the scenario FILENAME (the Imp token);

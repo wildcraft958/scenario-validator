@@ -31,6 +31,10 @@ from openpyxl.worksheet.datavalidation import DataValidation
 _ROOT = Path(__file__).resolve().parent.parent
 
 # key → (sheet, plain-language description). Lists are written comma-separated.
+# NOTE: `target_type_to_category` (GVT->Vehicle, EPTa->Pedestrian, ...) is intentionally
+# NOT exposed here. It is a fixed EuroNCAP protocol map kept as a model default in
+# src/models.py (edited in code, not per-site), so it stays out of the Excel sheets and
+# the json<->xlsx round-trip self-test below.
 _KEY_SHEET = {
     # ---- Protocol Constants (EuroNCAP — do not edit) ----
     "protocol_version": ("Protocol Constants", "Protocol label printed on every report header."),
@@ -96,7 +100,9 @@ def _autosize(ws, widths: list[int]) -> None:
 
 def build_workbook(raw: dict) -> Workbook:
     wb = Workbook()
-    wb.remove(wb.active)
+    default_sheet = wb.active
+    if default_sheet is not None:
+        wb.remove(default_sheet)
 
     # ---- key/value sheets ----
     sheets = {name: wb.create_sheet(name) for name in ("Protocol Constants", "Site Settings")}

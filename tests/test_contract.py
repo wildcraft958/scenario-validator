@@ -68,7 +68,7 @@ def _xosc(vut_speed_ms: str = "13.89", sim_time: str = "50") -> bytes:
       </Private>
       <Private entityRef="GVT">
         <PrivateAction><TeleportAction><Position>
-          <WorldPosition x="0" y="0.87" z="0" h="0"/>
+          <WorldPosition x="0" y="0" z="0" h="0"/>
         </Position></TeleportAction></PrivateAction>
         <PrivateAction><LongitudinalAction><SpeedAction><SpeedActionTarget>
           <AbsoluteTargetSpeed value="0"/>
@@ -182,11 +182,10 @@ def validation_rows(workbook: Path) -> dict[str, str]:
 def test_cli_success_and_report_contract(tmp_path: Path) -> None:
     scenario_dir = create_scenario(tmp_path)
     out = tmp_path / "out"
-    result = run_cli(scenario_dir, out, "--csv")
+    result = run_cli(scenario_dir, out)
     assert result.returncode == 0, result.stdout + result.stderr
     assert (out / "validation_run.log").exists()
     assert "Exit status: 0" in (out / "validation_run.log").read_text(encoding="utf-8")
-    assert list(out.glob("*.csv"))
 
     wb = openpyxl.load_workbook(latest_xlsx(out))
     assert wb.sheetnames[:3] == ["Validation", "Issues Log", "Run Summary"]
@@ -209,7 +208,7 @@ def test_cli_success_and_report_contract(tmp_path: Path) -> None:
 def test_cli_failure_exit_code_and_issues_log(tmp_path: Path) -> None:
     scenario_dir = create_scenario(tmp_path, include_ta=False)
     out = tmp_path / "out"
-    result = run_cli(scenario_dir, out, "--csv")
+    result = run_cli(scenario_dir, out)
     assert result.returncode == 1
     wb = openpyxl.load_workbook(latest_xlsx(out))
     issue_values = [cell.value for cell in wb["Issues Log"]["A"]]
@@ -323,7 +322,7 @@ def test_real_examples_smoke_validation(tmp_path: Path) -> None:
         pytest.skip("real examples directory is not present")
     for scenario_dir in sorted(p for p in examples.iterdir() if p.is_dir()):
         out = tmp_path / scenario_dir.name
-        result = run_cli(scenario_dir, out, "--csv", "--no-rd")
+        result = run_cli(scenario_dir, out, "--no-rd")
         assert result.returncode == 1
         assert latest_xlsx(out).exists()
         rows = validation_rows(latest_xlsx(out))

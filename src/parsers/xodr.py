@@ -1,14 +1,11 @@
 """OpenDRIVE (.xodr) secure parser with XPath helpers."""
 from __future__ import annotations
 
-import logging
 import math
 from pathlib import Path
 from typing import Any
 
 from lxml import etree  # type: ignore[import-untyped]
-
-log = logging.getLogger(__name__)
 
 _SECURE_PARSER = etree.XMLParser(
     no_network=True,

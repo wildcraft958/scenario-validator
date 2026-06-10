@@ -7,8 +7,6 @@ Usage:
 Options:
     --config PATH      Path to config.json  [default: config.json next to this script]
     --output DIR       Directory to write reports  [default: <scenario_dir>]
-    --template PATH    Existing .xlsx template to populate instead of creating new
-    --csv              Also write a CSV report alongside the Excel file
     --no-rd            Skip .rd Model Desk checks (if .rd file is missing)
     --quiet            Suppress console output (still logs to file)
 """
@@ -40,8 +38,6 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--config", default=None, help="Path to config.json")
     parser.add_argument("--output", default=None, help="Output directory for reports")
-    parser.add_argument("--template", default=None, help="Existing .xlsx template to populate")
-    parser.add_argument("--csv", action="store_true", help="Also write CSV report")
     parser.add_argument("--no-rd", action="store_true", help="Skip Model Desk .rd checks")
     parser.add_argument("--quiet", action="store_true", help="Suppress console output")
     parser.add_argument(
@@ -96,7 +92,6 @@ def run_validation(
     config_path: Path | None = None,
     skip_rd: bool = False,
     cli_command: str = "",
-    template_path: Path | None = None,
 ) -> tuple[list[CheckResult], SummaryStats]:
     """Core validation runner. Returns (results, stats)."""
     from src.models import Config, SummaryStats
@@ -145,7 +140,7 @@ def run_validation(
         log.info("Running Road checks on %s...", xodr_path.name)
         try:
             xodr_root = xodr_parser.load(xodr_path)
-            road_results = road.run_all(xodr_root, config, scenario_tag=scenario_tag)
+            road_results = road.run_all(xodr_root, config)
             for result in road_results:
                 result.source_file = xodr_path.name
         except Exception as exc:
@@ -370,7 +365,6 @@ def run_validation(
         protocol_version=config.protocol_version,
         scenario_dir=str(scenario_dir),
         config_path=str(effective_config_path.resolve()),
-        template_path=str(template_path.resolve()) if template_path else "",
         cli_command=cli_command,
     )
 
@@ -398,11 +392,6 @@ def main() -> int:
         emit(f"ERROR: '{scenario_dir}' is not a directory", error=True)
         return 1
 
-    template_path = Path(args.template).resolve() if args.template else None
-    if template_path and not template_path.is_file():
-        emit(f"ERROR: template file '{template_path}' does not exist", error=True)
-        return 1
-
     output_dir = Path(args.output).resolve() if args.output else scenario_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -426,7 +415,6 @@ def main() -> int:
             config_path=config_path,
             skip_rd=args.no_rd,
             cli_command=" ".join(sys.argv),
-            template_path=template_path,
         )
     except ConfigError as exc:
         # User-facing config problem — plain message, no stack trace.
@@ -441,17 +429,12 @@ def main() -> int:
         return 1
 
     # ---- Write reports ----
-    from src.reporter import write_excel, write_csv
+    from src.reporter import write_excel
 
     ts_suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
     excel_path = output_dir / f"Validation_{stats.scenario_name}_{ts_suffix}.xlsx"
 
-    write_excel(results, stats, excel_path, template_path=template_path)
-
-    if args.csv:
-        csv_path = output_dir / f"Validation_{stats.scenario_name}_{ts_suffix}.csv"
-        write_csv(results, stats, csv_path)
-        log.info("CSV written: %s", csv_path)
+    write_excel(results, stats, excel_path)
 
     exit_code = 0 if stats.failed == 0 else 1
     log.info("Excel written: %s", excel_path)

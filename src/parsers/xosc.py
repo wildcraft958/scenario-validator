@@ -1,13 +1,10 @@
 """OpenSCENARIO (.xosc) secure parser with XPath helpers."""
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Any
 
 from lxml import etree  # type: ignore[import-untyped]
-
-log = logging.getLogger(__name__)
 
 # Secure lxml parser: no network, no external entity resolution
 _SECURE_PARSER = etree.XMLParser(

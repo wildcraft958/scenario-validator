@@ -8,14 +8,11 @@ pattern, so a present-but-misnamed file is found rather than reported missing.
 """
 from __future__ import annotations
 
-import logging
 import zipfile
 from pathlib import Path
 
-from ..models import CheckResult, Config
+from ..models import CheckResult, CheckStatus, Config
 from .naming import _canonical_base
-
-log = logging.getLogger(__name__)
 
 CATEGORY = "FunctionalBlock"
 
@@ -24,12 +21,12 @@ _DESCRIPTIONS = {
 }
 
 
-def _make(check_id: str, status: str, comment: str = "") -> CheckResult:
+def _make(check_id: str, status: CheckStatus, comment: str = "") -> CheckResult:
     return CheckResult(
         check_id=check_id,
         category=CATEGORY,
         description=_DESCRIPTIONS[check_id],
-        status=status,  # type: ignore[arg-type]
+        status=status,
         comment=comment,
     )
 

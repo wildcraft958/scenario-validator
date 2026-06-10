@@ -64,9 +64,10 @@
   "sov_entity_names": ["SOV", "SK_SUV"],
   "_ASSUMPTIONS_TO_VERIFY": [
     "These values were inferred by tooling. Verify against EuroNCAP protocol before treating as definitive:",
-    "scenarios.*.type (longitudinal/crossing/head-on) - inferred from scenario name; confirm each scenario type is correct.",
-    "scenarios.*.vut_speed_range_kmh - CONFIRMED from EuroNCAP RAG db (adas_workspace/data/index/encap.db): CCFhol/CCFhos [30,100], CCFtap [10,25], CPNCO [20,60], CPTA [10,60]. Outstanding: CCRs/CCRb/CCRm/CCCscp speed ranges not yet confirmed.",
+    "scenarios.*.type (longitudinal/crossing/head-on) is an INTERNAL impact-tolerance routing key, NOT the EuroNCAP Scenario-Type taxonomy (Longitudinal/Turning/Crossing). It only selects CH_SC_16 (type='crossing', +/-5%) vs CH_SC_17 (type 'longitudinal'/'head-on', +/-1%). Do NOT remap it to the EuroNCAP motion axis without re-checking the tolerance routing.",
+    "scenarios.*.vut_speed_range_kmh - CONFIRMED/CORRECTED from EuroNCAP RAG db (adas_workspace/data/index/encap.db) on 2026-06-10: CCRs [10,80] & CCRb/CCRm [30,130] (pg29); CCFhos/CCFhol [30,100] (pg30-31); CCFtap/CMFtap [10,25] (pg33-34); CCCscp/CMCscp [20,80] (pg36/39); CMRs [10,50] & CMRb [30,80] (pg32, corrected); CPNA/CPFA/CPNCO [10,60] (pg52-54, corrected from [20,60]); CPLA [10,80] (pg42); CPTA/CBTA [10,25] (pg46/51); CBLA [20,80] (pg45); CBNA/CBFA/CBNAO [10,60] (pg56-58).",
     "scenarios.*.impact_overlap_pct - cross-checked against filename token (e.g. '50Imp', '10Imp'). CPTA corrected 50->10. Confirm protocol table values match.",
+    "allowed_impact_overlaps [0,10,25,50,75,90,100] is a cross-TYPE SUPERSET used only for the coarse CH_NM_02 filename-token check (turning grid pg46 = 10/25/50/75/90; longitudinal pg29 allows 0/100 and even -25/125). Exact per-instance impact correctness is owned by CH_SC_16/17 against the filename Imp token, not this list.",
     "curve_part2_radii_m - CONFIRMED from EuroNCAP Frontal v1.1 Table 1.2.4: Nearside 10km/h=8m, Farside 10km/h=9m, 15km/h=11.75m, 20-25km/h=14.75m. Nearside radii for 15km/h and 20-25km/h not yet in table (add when available).",
     "CONFIRMED values (do NOT change): junction radius 8m (CH_RD_03), leftmost road at (0,0,0) (CH_RD_04), sim time 100-150s (CH_SC_04), lane width 3.5m (CH_RD_01), decel -4m/s2 (CH_MR_02).",
     "CONFIRMED by official Review_Checklist_V12 screenshots (2026-05-29): RR export Driving Side = Left (traffic_handedness LHT); export Catalog settings = None (catalog files optional in NM_03); simulation_time_by_speed_s 35/40/45 max 60 matches official VUT speed table; CH_SC_22 wording 'All obstructions should be placed in NCAP Asset folder in RR'; SOV definition 'can either be a GVT or a real vehicle' (sov_entity_names exemption)."
@@ -96,16 +97,16 @@
   },
   "scenarios": {
     "CCRs": { "type": "longitudinal", "vut_speed_range_kmh": [10, 80] },
-    "CCRb": { "type": "longitudinal", "vut_speed_range_kmh": [12, 79] },
-    "CCRm": { "type": "longitudinal", "vut_speed_range_kmh": [12, 62] },
+    "CCRb": { "type": "longitudinal", "vut_speed_range_kmh": [30, 130] },
+    "CCRm": { "type": "longitudinal", "vut_speed_range_kmh": [30, 130] },
     "CCCscp": { "type": "crossing", "vut_speed_range_kmh": [20, 80] },
     "CCFhos": { "type": "head-on", "vut_speed_range_kmh": [30, 100] },
     "CCFhol": { "type": "crossing", "vut_speed_range_kmh": [30, 100], "has_sov": true },
     "CCFtap": { "type": "crossing", "vut_speed_range_kmh": [10, 25] },
     "CPLA": { "type": "longitudinal", "vut_speed_range_kmh": [10, 80] },
-    "CPFA": { "type": "crossing", "vut_speed_range_kmh": [20, 60] },
-    "CPNA": { "type": "crossing", "vut_speed_range_kmh": [20, 60] },
-    "CPNCO": { "type": "crossing", "vut_speed_range_kmh": [20, 60] },
+    "CPFA": { "type": "crossing", "vut_speed_range_kmh": [10, 60] },
+    "CPNA": { "type": "crossing", "vut_speed_range_kmh": [10, 60] },
+    "CPNCO": { "type": "crossing", "vut_speed_range_kmh": [10, 60] },
     "CPTA": { "type": "crossing", "vut_speed_range_kmh": [10, 60] },
     "CPTAfo": { "type": "crossing", "vut_speed_range_kmh": [10, 60] },
     "CPTAfs": { "type": "crossing", "vut_speed_range_kmh": [10, 60] },
@@ -122,7 +123,7 @@
     "CBTAns": { "type": "crossing", "vut_speed_range_kmh": [10, 25], "side_impact": true },
     "CMCscp": { "type": "crossing", "vut_speed_range_kmh": [20, 80], "side_impact": true },
     "CMFtap": { "type": "crossing", "vut_speed_range_kmh": [10, 25] },
-    "CMRs": { "type": "longitudinal", "vut_speed_range_kmh": [10, 80] },
-    "CMRb": { "type": "longitudinal", "vut_speed_range_kmh": [30, 130] }
+    "CMRs": { "type": "longitudinal", "vut_speed_range_kmh": [10, 50] },
+    "CMRb": { "type": "longitudinal", "vut_speed_range_kmh": [30, 80] }
   }
 }

@@ -1,13 +1,10 @@
 """CH_MR_01, CH_MR_02 - Model Review checks (speed sanity + braking deceleration)."""
 from __future__ import annotations
 
-import logging
 from typing import Any
 
-from ..models import CheckResult, Config
+from ..models import CheckResult, CheckStatus, Config
 from ..parsers import xosc
-
-log = logging.getLogger(__name__)
 
 CATEGORY = "ModelReview"
 
@@ -17,12 +14,12 @@ _DESCRIPTIONS = {
 }
 
 
-def _make(check_id: str, status: str, comment: str = "") -> CheckResult:
+def _make(check_id: str, status: CheckStatus, comment: str = "") -> CheckResult:
     return CheckResult(
         check_id=check_id,
         category=CATEGORY,
         description=_DESCRIPTIONS[check_id],
-        status=status,  # type: ignore[arg-type]
+        status=status,
         comment=comment,
     )
 

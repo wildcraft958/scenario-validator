@@ -127,7 +127,7 @@ class TestRD03JunctionRadius:
         which RoadRunner does not export to .xodr → MANUAL_REVIEW (not FAIL)."""
         from src.checks.road import check_rd_03
         root = _load(CPNCO_XODR)
-        result = check_rd_03(root, config, scenario_tag="CPNCO")
+        result = check_rd_03(root, config)
         assert result.status == "MANUAL_REVIEW"
         assert "13" in result.comment or "20" in result.comment
         assert "kerb" in result.comment.lower()
@@ -142,7 +142,7 @@ class TestRD03JunctionRadius:
             if road.get("id") in junc_roads:
                 for arc in road.xpath(".//planView/geometry/arc"):
                     arc.set("curvature", "0.125")  # 1/8 = 8m radius
-        result = check_rd_03(root, config, scenario_tag="CPNCO")
+        result = check_rd_03(root, config)
         assert result.status == "PASS", result.comment
 
     def test_too_tight_radius_fails(self, config):
@@ -154,7 +154,7 @@ class TestRD03JunctionRadius:
             if road.get("id") in junc_roads:
                 for arc in road.xpath(".//planView/geometry/arc"):
                     arc.set("curvature", "0.2")  # 1/0.2 = 5m radius < 8m spec
-        result = check_rd_03(root, config, scenario_tag="CPNCO")
+        result = check_rd_03(root, config)
         assert result.status == "FAIL", result.comment
 
 
@@ -166,14 +166,14 @@ class TestRD04RoadOrigin:
     def test_cpnco_fails(self, config):
         """CPNCO leftmost road at x=598 → FAIL."""
         from src.checks.road import check_rd_04
-        result = check_rd_04(_load(CPNCO_XODR), config, scenario_tag="CPNCO")
+        result = check_rd_04(_load(CPNCO_XODR), config)
         assert result.status == "FAIL"
         assert "598" in result.comment
 
     def test_cpta_passes(self, config):
         """CPTA leftmost road at (0, 0) → PASS."""
         from src.checks.road import check_rd_04
-        assert check_rd_04(_load(CPTA_XODR), config, scenario_tag="CPTA").status == "PASS"
+        assert check_rd_04(_load(CPTA_XODR), config).status == "PASS"
 
     def test_moving_to_origin_passes(self, config):
         """Mutate CPNCO: move leftmost road start to (0, 0) → PASS."""
@@ -185,7 +185,7 @@ class TestRD04RoadOrigin:
             _, leftmost_g = min(geoms, key=lambda t: t[0])
             leftmost_g.set("x", "0.0")
             leftmost_g.set("y", "0.0")
-        result = check_rd_04(root, config, scenario_tag="CPNCO")
+        result = check_rd_04(root, config)
         assert result.status == "PASS", result.comment
 
 

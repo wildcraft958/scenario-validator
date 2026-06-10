@@ -754,21 +754,8 @@ class TestNegativeChecks:
         assert paths_intersect(a, c) is None
         assert paths_intersect([], b) is None
 
-    def test_impact_estimate_headon_half_offset(self):
-        """Head-on with 0.9 m lateral offset between 1.8 m-wide cars → ~50% width overlap."""
-        from src.geometry import estimate_trajectory_impact
-        bbox = (0.0, 0.0, 4.5, 1.8)
-        # VUT eastbound at y=0, target westbound at y=0.9, closing at 20 m/s
-        vut = [{"time": t, "x": 0 + 10.0 * t, "y": 0.0, "h": 0.0} for t in range(0, 11)]
-        import math
-        tgt = [{"time": t, "x": 100 - 10.0 * t, "y": 0.9, "h": math.pi} for t in range(0, 11)]
-        est = estimate_trajectory_impact(vut, tgt, bbox, bbox, target_category="Vehicle")
-        assert est is not None and est.contact
-        assert abs(est.width_overlap_pct - 50.0) < 2.0, est
-        assert abs(est.rel_heading_deg - 180.0) < 1.0
-
-    def test_impact_estimate_headon_dead_centre(self):
-        """Dead-centre head-on → 100% overlap (the CCFhol/CCFhos design-flaw signature)."""
+    def test_impact_estimate_centre_is_50pct(self):
+        """Dead-centre head-on: target reference point on the VUT centreline → impact_pct_width ≈ 50% (§1.2.5)."""
         from src.geometry import estimate_trajectory_impact
         import math
         bbox = (0.0, 0.0, 4.5, 1.8)
@@ -776,7 +763,24 @@ class TestNegativeChecks:
         tgt = [{"time": t, "x": 100 - 10.0 * t, "y": 0.0, "h": math.pi} for t in range(0, 11)]
         est = estimate_trajectory_impact(vut, tgt, bbox, bbox, target_category="Vehicle")
         assert est is not None and est.contact
-        assert est.width_overlap_pct > 95.0, est
+        assert abs(est.impact_pct_width - 50.0) < 2.0, est
+        assert abs(est.rel_heading_deg - 180.0) < 1.0
+
+    def test_impact_estimate_is_directional_no_fold(self):
+        """§1.2.5 impact_pct_width is DIRECTIONAL (0%=right edge, 100%=left), not folded:
+        a +0.45 m left offset → ~75%, a -0.45 m right offset → ~25% (distinct, so a
+        mirror-image design error fails rather than being matched to the near edge)."""
+        from src.geometry import estimate_trajectory_impact
+        import math
+        bbox = (0.0, 0.0, 4.5, 1.8)
+        vut = [{"time": t, "x": 10.0 * t, "y": 0.0, "h": 0.0} for t in range(0, 11)]
+        left = [{"time": t, "x": 100 - 10.0 * t, "y": 0.45, "h": math.pi} for t in range(0, 11)]
+        right = [{"time": t, "x": 100 - 10.0 * t, "y": -0.45, "h": math.pi} for t in range(0, 11)]
+        el = estimate_trajectory_impact(vut, left, bbox, bbox, target_category="Vehicle")
+        er = estimate_trajectory_impact(vut, right, bbox, bbox, target_category="Vehicle")
+        assert el is not None and el.contact and er is not None and er.contact
+        assert abs(el.impact_pct_width - 75.0) < 3.0, el
+        assert abs(er.impact_pct_width - 25.0) < 3.0, er
 
     def test_impact_estimate_no_contact_reports_min_gap(self):
         """Parallel same-direction paths never meet → contact=False with min gap."""
@@ -801,8 +805,8 @@ class TestNegativeChecks:
         ped = [{"time": t, "x": 52.95, "y": -0.7 - 1.0 * (5.07 - t), "h": math.pi / 2} for t in range(0, 11)]
         est = estimate_trajectory_impact(vut, ped, vut_bbox, ped_bbox, target_category="Pedestrian")
         assert est is not None and est.contact, est
-        near_edge = min(est.front_pos_left_pct, est.front_pos_right_pct)
-        assert abs(near_edge - 11.0) < 5.0, est
+        # Pedestrian 0.7 m to the RIGHT of centre at the front-plane crossing → ~11% across width.
+        assert abs(est.impact_pct_width - 11.0) < 5.0, est
 
     def test_real_cpta_impact_estimate_passes(self, config):
         """Real CPTA export: estimate ~8% vs expected 10% ±5 → PASS."""
@@ -1157,36 +1161,6 @@ class TestFunctionalBlock:
         assert result.status == "FAIL"
 
 
-class TestGeometry:
-    def test_50pct_overlap_static(self):
-        from src.geometry import VehicleState, lateral_offset_percentage
-        vut    = VehicleState(x=0, y=0,   heading_deg=0, length=4.5, width=1.8, speed_ms=0)
-        target = VehicleState(x=0, y=0.9, heading_deg=0, length=4.5, width=1.8, speed_ms=0)
-        pct = lateral_offset_percentage(vut, target)
-        assert 40 <= pct <= 60, f"Expected ~50%, got {pct:.1f}%"
-
-    def test_100pct_overlap(self):
-        from src.geometry import VehicleState, lateral_offset_percentage
-        vut    = VehicleState(x=0, y=0, heading_deg=0, length=4.5, width=1.8, speed_ms=0)
-        target = VehicleState(x=0, y=0, heading_deg=0, length=4.5, width=1.8, speed_ms=0)
-        pct = lateral_offset_percentage(vut, target)
-        assert pct >= 95.0, f"Expected ~100%, got {pct:.1f}%"
-
-    def test_zero_overlap(self):
-        from src.geometry import VehicleState, lateral_offset_percentage
-        vut    = VehicleState(x=0, y=0,  heading_deg=0, length=4.5, width=1.8, speed_ms=0)
-        target = VehicleState(x=0, y=20, heading_deg=0, length=4.5, width=1.8, speed_ms=0)
-        pct = lateral_offset_percentage(vut, target)
-        assert pct < 1.0, f"Expected ~0%, got {pct:.1f}%"
-
-    def test_longitudinal_impact_projection(self):
-        from src.geometry import VehicleState, compute_impact_percentage
-        vut    = VehicleState(x=-30, y=0, heading_deg=0, length=4.5, width=1.8, speed_ms=14.0)
-        target = VehicleState(x=0,   y=0, heading_deg=0, length=4.5, width=1.8, speed_ms=0.0)
-        pct = compute_impact_percentage(vut, target, scenario_type="longitudinal")
-        assert pct > 10, f"Expected meaningful overlap for head-on longitudinal, got {pct:.1f}%"
-
-
 # ============================================================
 # Config tests (no external files needed)
 # ============================================================
@@ -1393,23 +1367,3 @@ class TestFullPipeline:
             "Timestamp",
         ]
 
-    def test_csv_report_created(self, tmp_path):
-        from src.models import CheckResult, SummaryStats
-        from src.reporter import write_csv
-
-        results = [
-            CheckResult(check_id="CH_NM_01", category="Naming",
-                        description="Test", status="PASS", comment="ok"),
-        ]
-        stats = SummaryStats(
-            scenario_name="Test", run_timestamp="2026-05-25 22:00:00",
-            protocol_version="test", total=1, passed=1, failed=0,
-            manual=0, na=0, pass_rate=100.0, critical_failures=[],
-        )
-        out = tmp_path / "test_report.csv"
-        write_csv(results, stats, out)
-        assert out.exists()
-        content = out.read_text()
-        assert "CH_NM_01" in content
-        assert "Yes" in content
-        assert "=== RUN SUMMARY ===" not in content
