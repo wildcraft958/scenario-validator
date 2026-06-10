@@ -138,13 +138,16 @@ def check_rd_03(root: Any, config: Config) -> CheckResult:
             f"Connecting-road arc radius ≈ {target} m found (radii: {rounded}).",
         )
 
+    smallest = min(rounded)
     return _make(
         "CH_RD_03",
         "MANUAL_REVIEW",
-        f"Connecting-road arc radii {rounded} m are lane-centre values; RoadRunner does not "
-        f"export the kerb/corner radius to OpenDRIVE. All radii are consistent with a kerb "
-        f"radius ≥ {target} m — verify Corner Radius = {target} m in the RoadRunner scene. "
-        f"(VUT driven Part-2 turn radius is independently validated by CH_SC_07.)",
+        f"Connecting-road arc radii {rounded} m are lane-centre paths that run OUTSIDE the kerb "
+        f"fillet, so the kerb/corner radius is necessarily ≤ the smallest of these ({smallest} m); "
+        f"RoadRunner does not export the kerb radius itself to OpenDRIVE. A {target} m corner "
+        f"radius is consistent with this layout, and the actual driven turn radius is "
+        f"independently validated by CH_SC_07. You can sign off this manual review if CH_SC_07 "
+        f"passes and Corner Radius = {target} m is set in the RoadRunner scene.",
     )
 
 

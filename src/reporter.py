@@ -12,6 +12,7 @@ from pathlib import Path
 import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.views import Selection
 
 from .models import CheckResult, SummaryStats
 
@@ -97,9 +98,10 @@ def _auto_row_heights(ws, data_start_row: int, col_char_widths: dict[int, int],
             text = str(cell.value)
             col_idx = cell.column
             col_w = col_char_widths.get(col_idx, 15)
-            # Each Excel "character width" unit ≈ 1 character at default font.
-            # Estimate wrapped lines conservatively.
-            lines = math.ceil(len(text) / max(col_w, 1))
+            # Each Excel "character width" unit ≈ 1 character at default font. Count wrapped
+            # lines per explicit paragraph (split on newlines) so multi-line comments are not
+            # clipped, then sum.
+            lines = sum(max(1, math.ceil(len(seg) / max(col_w, 1))) for seg in text.split("\n"))
             max_lines = max(max_lines, max(1, lines))
         height = min_height + (max_lines - 1) * line_height
         ws.row_dimensions[row[0].row].height = height
@@ -134,6 +136,11 @@ def write_excel(
 
     _set_column_widths(ws)
     ws.freeze_panes = "A4"
+    # openpyxl leaves the bottom (scrollable) pane's active cell at A1, which sits inside the
+    # frozen header region. Excel then scrolls the bottom pane up to row 1 on redraw, painting
+    # the title + header rows a SECOND time below the frozen ones (the "duplicate header"
+    # artifact). Anchor the bottom-pane selection to the first scrollable cell so it opens clean.
+    ws.sheet_view.selection = [Selection(pane="bottomLeft", activeCell="A4", sqref="A4")]
     # Set header rows to fixed heights; auto-size data rows
     ws.row_dimensions[1].height = 20
     ws.row_dimensions[3].height = 28

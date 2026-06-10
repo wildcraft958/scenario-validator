@@ -409,19 +409,51 @@ def check_sc_07(xosc_root: Any, config: Config) -> CheckResult:
 
 
 def check_sc_08(xosc_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
-    """Scenario satisfies applicable protocol requirements - flagged for manual review."""
+    """Scenario satisfies applicable protocol requirements.
+
+    This is the catch-all "did we meet the protocol" item. Rather than a blind "go read the
+    protocol", it reports the concrete, scenario-specific facts the tool already knows (the
+    correct EuroNCAP motion class - NOT the internal tolerance-routing key - plus the speed
+    range, impact axis and turn sub-variant) and names the individual checks that auto-verify
+    each protocol requirement, so a reviewer who sees those pass can sign this off without a
+    separate manual pass through the protocol.
+    """
     tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
-    hint = ""
-    if tag:
-        proto = config.scenario_protocol(tag)
-        if proto:
-            speed_info = f"VUT speed range: {proto.vut_speed_range_kmh} km/h" if proto.vut_speed_range_kmh else ""
-            hint = f"Scenario type: {tag} ({proto.type}). {speed_info}"
+    if not tag:
+        return _make(
+            "CH_SC_08", "MANUAL_REVIEW",
+            "Scenario type could not be identified from the name or parameters - verify the "
+            "applicable EuroNCAP protocol requirements manually.",
+        )
+
+    motion = scenario_motion_type(tag)
+    family = {"CC": "Car-to-Car", "CP": "Car-to-Pedestrian",
+              "CB": "Car-to-Bicyclist", "CM": "Car-to-Motorcyclist"}.get(tag[:2].upper(), "")
+    proto = config.scenario_protocol(tag)
+
+    facts: list[str] = []
+    label = f"{family} " if family else ""
+    facts.append(f"{tag} is a {label}{motion} scenario"
+                 + (" (VUT approaches the target from behind)" if is_rear_approach(tag) else ""))
+    if proto and proto.vut_speed_range_kmh:
+        facts.append(f"VUT speed range {proto.vut_speed_range_kmh} km/h (graded by CH_SC_18)")
+    if proto and proto.side_impact:
+        facts.append("side-impact: impact location measured across the VUT length (CH_SC_16)")
+    side, cross = turn_subvariant(tag)
+    if side or cross:
+        facts.append(f"turn sub-variant {side} turn / target {cross} direction (CH_SC_20)")
+
+    covered = (
+        "naming (CH_NM_01-05), road & junction layout (CH_RD), Init positions and timing "
+        "(CH_SC_02-13), zero-speed targets (CH_SC_14/15), impact location (CH_SC_16/17), VUT & "
+        "target speed (CH_SC_18), turn radius (CH_SC_07)"
+    )
     return _make(
-        "CH_SC_08",
-        "MANUAL_REVIEW",
-        f"Reviewer must go through the applicable EuroNCAP protocol and verify scenario-specific "
-        f"requirements manually. {hint}",
+        "CH_SC_08", "MANUAL_REVIEW",
+        ". ".join(facts) + ". Each protocol-specific requirement for this scenario is "
+        f"individually auto-checked by: {covered}. If those checks pass, this catch-all review "
+        "can be signed off without a separate pass through the protocol; otherwise address the "
+        "flagged items above.",
     )
 
 
