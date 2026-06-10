@@ -35,10 +35,14 @@ class ImpactEstimate(NamedTuple):
     t_contact: float | None            # first bbox-touch instant (s), None if no contact
     impact_pct_width: float | None     # struck point across VUT WIDTH (0%=right edge,100%=left)
     impact_pct_length: float | None    # struck point across VUT LENGTH (0%=rear,100%=front) — side impacts
-    lateral_offset_m: float | None     # target centre lateral offset in VUT frame at contact
+    lateral_offset_m: float | None     # target reference-point lateral offset in VUT frame at contact
     rel_heading_deg: float | None      # |target heading − VUT heading| at contact
     min_gap_m: float | None            # closest approach when no contact
     t_min_gap: float | None
+    # How much the impact % moves between first bbox-contact and the impact-plane crossing.
+    # High = the geometry is rotating/corner-first (§1.2.5.2) so the kinematic estimate
+    # cannot pin the location precisely → the caller downgrades the verdict to MANUAL_REVIEW.
+    eval_sensitivity_pct: float | None = None
 
 
 def _interp(verts: list[dict], t: float) -> tuple[float, float, float]:
@@ -76,22 +80,34 @@ def estimate_trajectory_impact(
     tgt_verts: list[dict],
     vut_bbox: tuple[float, float, float, float],
     tgt_bbox: tuple[float, float, float, float],
-    target_category: str = "Vehicle",
+    ref_offset: tuple[float, float] = (0.0, 0.0),
+    side_impact: bool = False,
     dt: float = 0.05,
 ) -> ImpactEstimate | None:
     """Estimate the impact geometry from kinematic (unbraked) design trajectories.
 
     Steps both actors through time (linear interpolation between trajectory vertices)
     and intersects their exported bounding boxes to find the designed first-contact
-    instant, then computes the §1.2.5 impact location by pure geometry:
-      - impact_pct_width  = position of the target reference point across the VUT
-        WIDTH (0% = outer right edge, 100% = outer left edge). For Pedestrian targets
-        the reference point is evaluated at the instant the target CENTRE crosses the
-        VUT front plane (protocol convention); for other targets at the contact instant.
-      - impact_pct_length = the same across the VUT LENGTH (0% = rear, 100% = front) —
-        the side-impact axis (CMCscp, CBTAfs, CBTAns). The caller selects the axis.
+    instant, then computes the §1.2.5 impact location by pure geometry.
 
-    Neither axis is clamped (the protocol matrices allow values outside [0, 100]).
+    `ref_offset` is the EuroNCAP TARGET REFERENCE POINT as a fraction of the target
+    (length, width) measured from the bbox centre, in the target body frame. It differs
+    by actor AND motion type (§1.2.5 / §1.4.1): e.g. GVT rear (−0.5, 0) for Car-to-Car
+    Rear, cyclist front wheel (+0.4, 0) for turning, pedestrian hip (0, 0) for turning.
+    The caller (resolve_actor + target_reference_offset) supplies it; the default (0, 0)
+    is the bbox centre.
+
+      - impact_pct_width  = the reference point across the VUT WIDTH (0% = outer right
+        edge, 100% = outer left), read when the reference point reaches the VUT FRONT
+        profile plane (reading at reference-point coincidence, not the first bbox-corner
+        touch — §1.2.5.2).
+      - impact_pct_length = the reference point across the VUT LENGTH (0% = rear,
+        100% = front) when `side_impact` is set (CMCscp, CBTAfs, CBTAns), read when the
+        reference point reaches the struck VUT SIDE plane.
+
+    Neither axis is clamped (the protocol matrices allow −25%…125%). The % scale is the
+    FULL vehicle width/length — §1.2.5 fixes 0%/100% at the vehicle edges; the §1.3.1
+    50 mm profiled-line inset is contact geometry, not the % scale.
 
     Caveat: constant-trajectory kinematics, no physics — design verification only;
     HIL remains the final authority. Returns None when either vertex list is empty.
@@ -106,6 +122,9 @@ def estimate_trajectory_impact(
 
     vut_len = vut_bbox[2]
     vut_wid = vut_bbox[3]
+    # Target reference point in the target body frame (lon = +front, lat = +left).
+    ref_lon = tgt_bbox[0] + ref_offset[0] * tgt_bbox[2]
+    ref_lat = tgt_bbox[1] + ref_offset[1] * tgt_bbox[3]
     near = max(vut_len, vut_bbox[3], tgt_bbox[2], tgt_bbox[3]) * 4 + 10  # proximity gate
 
     first_hit = None
@@ -145,49 +164,50 @@ def estimate_trajectory_impact(
             lo = mid
     tc = hi
 
-    def vut_frame(t_eval: float) -> tuple[float, float, float, float]:
-        """(longitudinal, lateral) of target centre in VUT frame + headings."""
+    def ref_in_vut(t_eval: float) -> tuple[float, float, float, float]:
+        """(longitudinal, lateral) of the TARGET REFERENCE POINT in the VUT frame + headings."""
         vx, vy, vh = _interp(vut_verts, t_eval)
         gx, gy, gh = _interp(tgt_verts, t_eval)
-        dx, dy = gx - vx, gy - vy
+        # reference point in world: rotate the body-frame offset by the target heading
+        rx = gx + ref_lon * math.cos(gh) - ref_lat * math.sin(gh)
+        ry = gy + ref_lon * math.sin(gh) + ref_lat * math.cos(gh)
+        dx, dy = rx - vx, ry - vy
         lon = dx * math.cos(vh) + dy * math.sin(vh)
         lat = -dx * math.sin(vh) + dy * math.cos(vh)
         return lon, lat, vh, gh
 
-    lon_c, lat_c, vh_c, gh_c = vut_frame(tc)
+    lon_c, lat_c, vh_c, gh_c = ref_in_vut(tc)
     rel_heading = math.degrees(abs(gh_c - vh_c)) % 360.0
     if rel_heading > 180.0:
         rel_heading = 360.0 - rel_heading
 
-    # VRU metric: for pedestrians evaluate at the instant the target CENTRE crosses
-    # the VUT front plane (protocol convention); otherwise use the contact instant.
-    lat_eval = lat_c
-    if target_category == "Pedestrian":
-        prev_ahead, prev_lat = None, None
-        te = tc
-        while te <= min(t1, tc + 5.0):
-            lon_e, lat_e, _, _ = vut_frame(te)
-            ahead = lon_e - vut_len / 2
-            if prev_ahead is not None and prev_lat is not None and prev_ahead > 0 >= ahead:
-                # linear interpolation to the exact front-plane crossing (ahead == 0)
-                f = prev_ahead / (prev_ahead - ahead)
-                lat_eval = prev_lat + f * (lat_e - prev_lat)
-                break
-            prev_ahead, prev_lat = ahead, lat_e
-            te += dt / 2
-
-    # EuroNCAP impact location (§1.2.5): the target reference point (≈ target centre)
-    # projected onto the VUT WIDTH — 0% = outer right edge, 100% = outer left edge.
-    # Side-impact scenarios measure across the VUT LENGTH — 0% = rearmost, 100% = front.
-    # Unclamped: the protocol matrices allow values outside [0, 100].
-    impact_pct_width = (vut_wid / 2 + lat_eval) / vut_wid * 100.0
+    # EuroNCAP impact location (§1.2.5): the target reference point projected onto the VUT
+    # WIDTH (0% = outer right edge, 100% = outer left) at the IMPACT (first-contact) instant;
+    # for side impacts onto the VUT LENGTH (0% = rearmost, 100% = foremost). Scaled to the
+    # FULL vehicle width/length (§1.2.5 fixes 0%/100% at the vehicle edges). For a
+    # perpendicular crosser first contact ≈ the reference point reaching the VUT front, so a
+    # single instant suffices; the sensitivity below guards the rotating/corner-first cases.
+    impact_pct_width = (vut_wid / 2 + lat_c) / vut_wid * 100.0
     impact_pct_length = (vut_len / 2 + lon_c) / vut_len * 100.0
+
+    # Reliability = how much the impact % moves across ±the protocol SCP sync tolerance
+    # (±0.1 s, §1.2.3) around the contact instant. High = rotating / fast geometry where the
+    # kinematics cannot pin the location within the sync window (§1.2.5.2 corner-first) → the
+    # caller downgrades to MANUAL_REVIEW rather than trust the number.
+    w = max(dt, 0.1)
+    lon_a, lat_a, _, _ = ref_in_vut(max(t0, tc - w))
+    lon_b, lat_b, _, _ = ref_in_vut(min(t1, tc + w))
+    if side_impact:
+        eval_sensitivity_pct = abs((lon_b - lon_a) / vut_len * 100.0)
+    else:
+        eval_sensitivity_pct = abs((lat_b - lat_a) / vut_wid * 100.0)
 
     return ImpactEstimate(
         contact=True, t_contact=tc,
         impact_pct_width=impact_pct_width, impact_pct_length=impact_pct_length,
         lateral_offset_m=lat_c, rel_heading_deg=rel_heading,
         min_gap_m=None, t_min_gap=None,
+        eval_sensitivity_pct=eval_sensitivity_pct,
     )
 
 

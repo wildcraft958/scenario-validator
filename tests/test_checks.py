@@ -761,7 +761,7 @@ class TestNegativeChecks:
         bbox = (0.0, 0.0, 4.5, 1.8)
         vut = [{"time": t, "x": 10.0 * t, "y": 0.0, "h": 0.0} for t in range(0, 11)]
         tgt = [{"time": t, "x": 100 - 10.0 * t, "y": 0.0, "h": math.pi} for t in range(0, 11)]
-        est = estimate_trajectory_impact(vut, tgt, bbox, bbox, target_category="Vehicle")
+        est = estimate_trajectory_impact(vut, tgt, bbox, bbox, ref_offset=(0.0, 0.0))
         assert est is not None and est.contact
         assert abs(est.impact_pct_width - 50.0) < 2.0, est
         assert abs(est.rel_heading_deg - 180.0) < 1.0
@@ -776,8 +776,8 @@ class TestNegativeChecks:
         vut = [{"time": t, "x": 10.0 * t, "y": 0.0, "h": 0.0} for t in range(0, 11)]
         left = [{"time": t, "x": 100 - 10.0 * t, "y": 0.45, "h": math.pi} for t in range(0, 11)]
         right = [{"time": t, "x": 100 - 10.0 * t, "y": -0.45, "h": math.pi} for t in range(0, 11)]
-        el = estimate_trajectory_impact(vut, left, bbox, bbox, target_category="Vehicle")
-        er = estimate_trajectory_impact(vut, right, bbox, bbox, target_category="Vehicle")
+        el = estimate_trajectory_impact(vut, left, bbox, bbox, ref_offset=(0.0, 0.0))
+        er = estimate_trajectory_impact(vut, right, bbox, bbox, ref_offset=(0.0, 0.0))
         assert el is not None and el.contact and er is not None and er.contact
         assert abs(el.impact_pct_width - 75.0) < 3.0, el
         assert abs(er.impact_pct_width - 25.0) < 3.0, er
@@ -788,7 +788,7 @@ class TestNegativeChecks:
         bbox = (0.0, 0.0, 4.5, 1.8)
         vut = [{"time": t, "x": 10.0 * t, "y": 0.0, "h": 0.0} for t in range(0, 11)]
         tgt = [{"time": t, "x": 10.0 * t, "y": 5.0, "h": 0.0} for t in range(0, 11)]
-        est = estimate_trajectory_impact(vut, tgt, bbox, bbox, target_category="Vehicle")
+        est = estimate_trajectory_impact(vut, tgt, bbox, bbox, ref_offset=(0.0, 0.0))
         assert est is not None and not est.contact
         assert est.min_gap_m is not None and 2.0 < est.min_gap_m < 4.0, est
 
@@ -803,7 +803,7 @@ class TestNegativeChecks:
         # Pedestrian walks +y, crossing x=52.95: VUT front (x+2.25) arrives there at t=5.07.
         # Tune start so pedestrian centre is at y=-0.7 when crossing the front plane.
         ped = [{"time": t, "x": 52.95, "y": -0.7 - 1.0 * (5.07 - t), "h": math.pi / 2} for t in range(0, 11)]
-        est = estimate_trajectory_impact(vut, ped, vut_bbox, ped_bbox, target_category="Pedestrian")
+        est = estimate_trajectory_impact(vut, ped, vut_bbox, ped_bbox, ref_offset=(0.0, 0.0))
         assert est is not None and est.contact, est
         # Pedestrian 0.7 m to the RIGHT of centre at the front-plane crossing → ~11% across width.
         assert abs(est.impact_pct_width - 11.0) < 5.0, est

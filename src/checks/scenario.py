@@ -713,6 +713,85 @@ def _synth_straight_trajectory(
     ]
 
 
+# ---------------------------------------------------------------------------
+# EuroNCAP motion taxonomy + per-actor target reference points (§1.2.5 / §1.4.1)
+# ---------------------------------------------------------------------------
+
+def scenario_motion_type(tag: str | None) -> str:
+    """EuroNCAP motion taxonomy (verification table pp60-61): 'longitudinal' / 'turning' /
+    'crossing', derived from the scenario tag. A fixed protocol classification (not site
+    config): Turning = turn-across-path (CCFtap/CMFtap) + pedestrian/cyclist turning
+    (CPTA*/CBTA*); Crossing = straight-crossing-path (*scp) + the crossing VRU families;
+    everything else (rear, head-on, longitudinal VRU) is Longitudinal."""
+    t = (tag or "").upper()
+    if "TAP" in t or t.startswith("CPTA") or t.startswith("CBTA"):
+        return "turning"
+    if "SCP" in t or t.startswith(("CPNA", "CPFA", "CPNCO", "CBNA", "CBNAO", "CBFA")):
+        return "crossing"
+    return "longitudinal"
+
+
+def is_rear_approach(tag: str | None) -> bool:
+    """True when the VUT approaches the target from behind, so the struck point is the
+    target REAR: Car/Motorcyclist Rear (CCR*/CMR*) and longitudinal VRU following
+    (CPLA/CBLA). Head-on (CCF*), turning and crossing strike the target FRONT."""
+    return (tag or "").upper().startswith(("CCR", "CMR", "CPLA", "CBLA"))
+
+
+def resolve_actor(
+    entity_name: str, filename_token: str | None,
+    bbox: tuple[float, float, float, float], osc_category: str,
+) -> str:
+    """Resolve the EuroNCAP target type {GVT, SOV, EPTa, EPTc, EBTa, EMT}.
+
+    OSC category alone cannot distinguish GVT/EBTa/EMT (RoadRunner exports all three as
+    <Vehicle>), so use the entity-name token first (authoritative — names carry the token,
+    e.g. 'EPTc_Trajectory'), then the filename target token, then a bbox aspect-ratio
+    fallback. EPTc is tested before EPTa (substring)."""
+    tokens = ("EPTc", "EPTa", "EBTa", "EMT", "GVT", "SOV")
+    name = (entity_name or "").upper().replace("_TRAJECTORY", "")
+    for tok in tokens:
+        if tok.upper() in name:
+            return tok
+    if filename_token:
+        for tok in tokens:
+            if tok.upper() == filename_token.upper():
+                return tok
+    if osc_category == "Pedestrian":
+        return "EPTa"
+    length, width = bbox[2], bbox[3]
+    if 0 < width < 1.0 and length / width > 2.4:
+        return "EBTa" if length <= 2.0 else "EMT"   # long & thin → two-wheeler
+    return "GVT"
+
+
+def target_reference_offset(actor: str, motion: str, is_rear: bool) -> tuple[float, float]:
+    """EuroNCAP target reference point as (f_lon, f_lat) fractions of the target
+    (length, width) from the bbox centre, in the target body frame (§1.2.5 / §1.4.1).
+    Box-relative approximations of the protocol points (exact hip/wheel offsets are not in
+    the RR export): front = +front edge, rear = −rear edge, centre = 0."""
+    a = (actor or "").upper()
+    if a in ("EPTA", "EPTC"):                       # pedestrian
+        # longitudinal (CPLA): VUT strikes the dummy's BACK (centreline-crosses-box point).
+        # turning (hip) and crossing (struck mid-body) ≈ the dummy centre — the 0.5 m box
+        # makes the exact point low-sensitivity anyway.
+        return (-0.25, 0.0) if motion == "longitudinal" else (0.0, 0.0)
+    if a == "EBTA":                                 # cyclist
+        if motion == "turning":
+            return (0.40, 0.0)                      # front wheel
+        if motion == "crossing":
+            return (0.0, 0.0)                       # crank shaft
+        return (-0.40, 0.0)                         # rear wheel (longitudinal)
+    if a == "EMT":                                  # motorcyclist
+        if motion == "longitudinal" and is_rear:
+            return (-0.40, 0.0)                     # rear wheel (CMRs/CMRb)
+        return (0.40, 0.0)                          # front wheel (turning/crossing/long-front)
+    # GVT / SOV (vehicle): rear for rear-approach (CCR), front for head-on/turning/crossing
+    if motion == "longitudinal" and is_rear:
+        return (-0.50, 0.0)
+    return (0.50, 0.0)
+
+
 def _entity_bbox(xosc_root: Any, config: Config, name: str) -> tuple[float, float, float, float]:
     """BoundingBox from the .xosc, falling back to config.vehicle_dimensions."""
     bbox = xosc.get_entity_bbox(xosc_root, name)
@@ -725,7 +804,7 @@ def _entity_bbox(xosc_root: Any, config: Config, name: str) -> tuple[float, floa
 def _impact_verdict(
     xosc_root: Any, config: Config, vut: str,
     expected: float, tolerance: float, check_id: str,
-    side_impact: bool = False,
+    tag: str | None = None, side_impact: bool = False, parsed_name: Any = None,
 ) -> CheckResult:
     """Estimate the designed impact location (§1.2.5) and grade it against `expected`.
 
@@ -751,7 +830,13 @@ def _impact_verdict(
             f"protocol — verify in RoadRunner.",
         )
     tgt = targets[0]
-    category = xosc.get_entity_category(xosc_root, tgt) or "Vehicle"
+    tgt_bbox = _entity_bbox(xosc_root, config, tgt)
+    # EuroNCAP target reference point depends on the actor AND the motion type (§1.2.5/§1.4.1).
+    osc_category = xosc.get_entity_category(xosc_root, tgt) or "Vehicle"
+    filename_token = getattr(parsed_name, "target_type", None) if parsed_name is not None else None
+    actor = resolve_actor(tgt, filename_token, tgt_bbox, osc_category)
+    motion = scenario_motion_type(tag)
+    ref_offset = target_reference_offset(actor, motion, is_rear_approach(tag))
     synthesised = not xosc.has_init_follow_trajectory(xosc_root, vut)
     if synthesised:
         vut_verts = _synth_straight_trajectory(xosc_root, config, vut)
@@ -763,8 +848,8 @@ def _impact_verdict(
     est = estimate_trajectory_impact(
         vut_verts, tgt_verts,
         _entity_bbox(xosc_root, config, vut),
-        _entity_bbox(xosc_root, config, tgt),
-        target_category=category,
+        tgt_bbox,
+        ref_offset=ref_offset, side_impact=side_impact,
     )
     if est is None:
         return _make(
@@ -795,19 +880,39 @@ def _impact_verdict(
            else "unbraked design trajectories + exported bounding boxes")
     side_note = (" (side-impact length axis — unvalidated locally; no CMCscp/CBTAfs/CBTAns "
                  "example exists, confirm in HIL)" if side_impact else "")
+    ref_desc = {(-0.5, 0.0): "rear", (0.5, 0.0): "front", (0.4, 0.0): "front wheel",
+                (-0.4, 0.0): "rear wheel", (-0.25, 0.0): "back", (0.0, 0.0): "centre"}.get(
+                    (round(ref_offset[0], 2), round(ref_offset[1], 2)), f"{ref_offset[0]:+.0%}L")
     detail = (
-        f"first contact t={est.t_contact:.2f}s, lateral offset {est.lateral_offset_m:+.2f} m, "
-        f"relative heading {est.rel_heading_deg:.0f}°"
+        f"{actor} {motion}, reference={ref_desc}, first contact t={est.t_contact:.2f}s, "
+        f"reference offset {est.lateral_offset_m:+.2f} m, relative heading {est.rel_heading_deg:.0f}°"
     )
     basis = (
         f"Computed from {src} (no AEB by design); §1.2.5 impact location across VUT "
         f"{axis}{side_note} — confirm in HIL."
     )
-    if abs(computed - expected) <= tolerance:
+    # Uncertainty-aware verdict (derived from geometry, not the scenario name). The estimate
+    # carries a kinematic uncertainty = how far the impact % swings across the ±0.1 s SCP sync
+    # window (est.eval_sensitivity_pct). PASS when it lands on the design within tolerance;
+    # MANUAL_REVIEW when the design value still lies inside that uncertainty band (rotating /
+    # fast geometry — §1.2.5.2 — so we can neither confirm nor reject it); FAIL only when the
+    # estimate is confidently off (far from the design AND the geometry is stable).
+    miss = abs(computed - expected)
+    sensitivity = est.eval_sensitivity_pct or 0.0
+    if miss <= tolerance:
         return _make(
             check_id, "PASS",
             f"Geometric impact estimate {computed:.1f}% matches protocol {expected:.0f}% "
             f"±{tolerance:.0f}% ({detail}). {basis}",
+        )
+    if miss <= sensitivity:
+        return _make(
+            check_id, "MANUAL_REVIEW",
+            f"Impact estimate {computed:.1f}% vs protocol {expected:.0f}% ±{tolerance:.0f}% "
+            f"({detail}). The design value is within the estimate's kinematic uncertainty "
+            f"(the impact % swings ±{sensitivity:.0f}% across the ±0.1 s sync window — "
+            f"rotating/fast geometry), so design-time kinematics can neither confirm nor "
+            f"reject it; verify the impact location in RoadRunner. {basis}",
         )
     return _make(
         check_id, "FAIL",
@@ -845,7 +950,7 @@ def _collision_course_note(xosc_root: Any, config: Config, vut: str) -> str:
 
 def check_sc_16(
     xosc_root: Any, config: Config, scenario_tag: str | None = None,
-    designed_impact_pct: float | None = None,
+    designed_impact_pct: float | None = None, parsed_name: Any = None,
 ) -> CheckResult:
     """Impact % for turning/crossing ≈ protocol value (±5%).
 
@@ -870,13 +975,13 @@ def check_sc_16(
                      "Could not identify the VUT entity to estimate impact geometry.")
     return _impact_verdict(
         xosc_root, config, vut, expected, tolerance, "CH_SC_16",
-        side_impact=proto.side_impact,
+        tag=tag, side_impact=proto.side_impact, parsed_name=parsed_name,
     )
 
 
 def check_sc_17(
     xosc_root: Any, config: Config, scenario_tag: str | None = None,
-    designed_impact_pct: float | None = None,
+    designed_impact_pct: float | None = None, parsed_name: Any = None,
 ) -> CheckResult:
     """Impact % for longitudinal must match the protocol value (±1%).
 
@@ -898,7 +1003,7 @@ def check_sc_17(
                      "Could not identify the VUT entity to estimate impact geometry.")
     return _impact_verdict(
         xosc_root, config, vut, expected, tolerance, "CH_SC_17",
-        side_impact=proto.side_impact,
+        tag=tag, side_impact=proto.side_impact, parsed_name=parsed_name,
     )
 
 
@@ -1165,8 +1270,8 @@ def run_all(
         check_sc_13(xosc_root, config),
         check_sc_14(xosc_root, config),
         check_sc_15(xosc_root, config),
-        check_sc_16(xosc_root, config, scenario_tag=scenario_tag, designed_impact_pct=designed_impact_pct),
-        check_sc_17(xosc_root, config, scenario_tag=scenario_tag, designed_impact_pct=designed_impact_pct),
+        check_sc_16(xosc_root, config, scenario_tag=scenario_tag, designed_impact_pct=designed_impact_pct, parsed_name=parsed_name),
+        check_sc_17(xosc_root, config, scenario_tag=scenario_tag, designed_impact_pct=designed_impact_pct, parsed_name=parsed_name),
         check_sc_18(xosc_root, config, scenario_tag=scenario_tag, parsed_name=parsed_name),
         check_sc_19(xosc_root, config),
         check_sc_20(xosc_root, config),
