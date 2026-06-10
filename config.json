@@ -26,13 +26,11 @@
     ".xml",
     ".txt"
   ],
-  "_filename_grammar_comment": "Scenario base name = <program>_<type>_<n>VUT_<n><TargetType>_<n>Imp (e.g. AEB_CCFtap_10VUT_30GVT_50Imp). CH_NM_02 validates this structure and cross-checks the values.",
   "allowed_programs": ["AEB"],
   "target_type_tokens": ["GVT", "EPTa", "EPTc", "EBTa", "EMT", "SOV"],
   "vut_speed_suffix": "VUT",
   "impact_suffix": "Imp",
   "allowed_impact_overlaps": [0, 10, 25, 50, 75, 90, 100],
-  "_associated_files_comment": "Workbooks that ship beside the 7 base files. {base} expands to the scenario base name. 'functional' is the ENCAP Test-Automation file checked by CH_FB_01; 'review' is the manual checklist being replaced by this tool's output.",
   "functional_file_pattern": "ENCAP_Scenario_func_{base}.xlsm",
   "macro_file_pattern": "MACRO_{base}.xlsx",
   "review_file_pattern": "{base}_Review.xlsx",
@@ -49,13 +47,11 @@
   "static_target_name_patterns": ["Obstruction", "GVTs", "GVTb", "GVT_S", "StaticVehicle"],
   "stationary_target_name_patterns": ["EMT", "EPTa", "EPTc", "EBTa"],
   "junction_intersection_min_spread_deg": 30.0,
-  "_geometry_tolerances_comment": "Tuning knobs for geometry checks (previously hardcoded in Python). Safe to leave at defaults.",
   "east_heading_tolerance_deg": 30,
   "cardinal_heading_tolerance_deg": 5,
   "right_lane_offset_threshold_m": 0.1,
   "curvature_min_heading_delta_rad": 0.01,
   "curvature_min_segment_length_m": 0.01,
-  "_curve_radii_comment": "Protocol Part 2 (constant-radius arc) values for CPTA/CCFtap/CMFtap/CBTA paths. Source: EuroNCAP Frontal Collisions v1.1 Table 1.2.4. Used by CH_SC_07 to PASS/FAIL instead of MANUAL_REVIEW when VUT speed and turn direction are known.",
   "curve_part2_radii_m": [
     {"vut_speed_max_kmh": 10,  "direction": "Nearside", "radius_m": 8.00},
     {"vut_speed_max_kmh": 10,  "direction": "Farside",  "radius_m": 9.00},
@@ -98,7 +94,6 @@
       "CPTA"
     ]
   },
-  "_scenarios_comment": "Full EuroNCAP taxonomy (one row per scenario + turn sub-variant). Config carries only what you EXPECT INSIDE the scene: type (longitudinal/crossing/head-on; turn-across-path maps to crossing) and vut_speed_range_kmh (protocol range). Per-instance values (VUT speed, target, impact %) come from the FILENAME and are validated against the files - they are NOT stored here. side_impact=true marks scenarios whose impact % is measured across the VUT LENGTH not width (EuroNCAP Protocol Frontal Collisions v1.1 §1.2.5: CMCscp, CBTAfs, CBTAns). has_sov marks the SC_22 SOV exemption.",
   "scenarios": {
     "CCRs": { "type": "longitudinal", "vut_speed_range_kmh": [10, 80] },
     "CCRb": { "type": "longitudinal", "vut_speed_range_kmh": [12, 79] },

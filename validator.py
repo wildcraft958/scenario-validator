@@ -19,7 +19,10 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.models import CheckResult, SummaryStats
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +97,7 @@ def run_validation(
     skip_rd: bool = False,
     cli_command: str = "",
     template_path: Path | None = None,
-) -> tuple[list, object]:
+) -> tuple[list[CheckResult], SummaryStats]:
     """Core validation runner. Returns (results, stats)."""
     from src.models import Config, SummaryStats
     from src.parsers import xosc as xosc_parser
@@ -186,7 +189,8 @@ def run_validation(
             xodr_root_for_sc = xodr_parser.load(xodr_path) if xodr_path else None
             if xodr_root_for_sc is None:
                 import io
-                from lxml import etree
+
+                from lxml import etree  # type: ignore[import-untyped]
                 _stub_parser = etree.XMLParser(no_network=True, resolve_entities=False, load_dtd=False)
                 xodr_root_for_sc = etree.parse(io.BytesIO(b"<OpenDRIVE/>"), _stub_parser).getroot()
             scenario_results = scenario.run_all(
