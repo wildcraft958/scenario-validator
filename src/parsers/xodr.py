@@ -159,19 +159,34 @@ def get_leftmost_road_origin(root: Any) -> dict[str, float] | None:
 
 def has_shoulder_lane_at_junction(root: Any) -> bool:
     """True if any junction-connecting road has a shoulder lane type."""
+    return "shoulder" in junction_nondriving_lane_types(root)
+
+
+# Lane types that legitimately appear on a junction-connecting road: real driving lanes
+# plus the structural OpenDRIVE reference/edge lane ('none', always lane id 0 + borders).
+# Anything else (shoulder/border/sidewalk/biking/parking/restricted) is not a driving lane
+# and causes the Model Desk lane-index mismatch the checklist warns about.
+_JUNCTION_ALLOWED_LANE_TYPES = {"driving", "none"}
+
+
+def junction_nondriving_lane_types(root: Any) -> list[str]:
+    """Sorted set of lane types on junction-connecting roads that are NOT real driving lanes
+    (excludes the structural 'none' reference lane). Empty when connecting roads are clean."""
     junction_roads: set[str] = set()
     for conn in xpath(root, "//junction/connection"):
         cr = conn.get("connectingRoad")
         if cr:
             junction_roads.add(cr)
 
+    found: set[str] = set()
     for road in get_roads(root):
         if road.get("id") not in junction_roads:
             continue
         for lane in road.xpath(".//laneSection//lane"):
-            if lane.get("type", "") == "shoulder":
-                return True
-    return False
+            lane_type = lane.get("type", "")
+            if lane_type and lane_type not in _JUNCTION_ALLOWED_LANE_TYPES:
+                found.add(lane_type)
+    return sorted(found)
 
 
 def get_road_start_end_positions(root: Any) -> list[dict[str, float]]:

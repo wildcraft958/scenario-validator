@@ -298,6 +298,9 @@ class Config(BaseModel):
     cardinal_heading_tolerance_deg: float = 5.0
     # CH_SC_05: lateral offset (m) from road centre beyond which the lane side is decided.
     right_lane_offset_threshold_m: float = 0.1
+    # CH_RD_04: how close the leftmost junction road's start must be to the RoadRunner
+    # origin (0,0) to PASS. Tight by default - the checklist requires (0,0,0) exactly.
+    road_origin_tolerance_m: float = 0.01
     # get_polyline_curvature_radii / CH_SC_07: minimum per-vertex heading change (rad) and
     # segment length (m) for a polyline section to count as "curving" rather than straight.
     curvature_min_heading_delta_rad: float = 0.01

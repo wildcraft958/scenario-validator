@@ -164,8 +164,9 @@ def check_rd_04(root: Any, config: Config) -> CheckResult:
     if origin is None:
         return _make("CH_RD_04", "FAIL", "Could not determine leftmost road origin")
 
-    x_ok = abs(origin["x"]) < 0.01
-    y_ok = abs(origin["y"]) < 0.01
+    tol = config.road_origin_tolerance_m
+    x_ok = abs(origin["x"]) < tol
+    y_ok = abs(origin["y"]) < tol
     if x_ok and y_ok:
         return _make("CH_RD_04", "PASS", "Leftmost road starts at the RoadRunner origin (0, 0)")
     return _make(
@@ -215,12 +216,14 @@ def check_rd_06(root: Any, config: Config) -> CheckResult:
     if not applies:
         return _make("CH_RD_06", "NA", na_reason)
 
-    if xodr.has_shoulder_lane_at_junction(root):
+    bad_types = xodr.junction_nondriving_lane_types(root)
+    if bad_types:
         return _make(
             "CH_RD_06",
             "FAIL",
-            "Shoulder lane found on junction-connecting road - this causes lane index "
-            "mismatch in Model Desk. Use main driving lane only.",
+            f"Non-driving lane type(s) {bad_types} found on junction-connecting road(s) - "
+            "this causes a lane-index mismatch in Model Desk. Junction lanes must be on the "
+            "main driving lane only (the structural 'none' reference lane is allowed).",
         )
     return _make("CH_RD_06", "PASS")
 
