@@ -73,7 +73,7 @@ def _check_config(config_path: Path | None) -> int:
     print(f"  SOV entity names     : {', '.join(config.sov_entity_names)}")
     print(f"  Vehicle dimensions   : {len(config.vehicle_dimensions)} entries")
     print(f"  Sim-time speed bands : {len(config.simulation_time_by_speed_s)}")
-    print(f"  Part-2 radii entries : {len(config.curve_part2_radii_m)}")
+    print(f"  Turn radii entries   : {len(config.curve_part2_radii_m)} (steady-state arc, Part 2)")
     return 0
 
 
@@ -405,7 +405,7 @@ def main() -> int:
             cli_command=" ".join(sys.argv),
         )
     except ConfigError as exc:
-        # User-facing config problem — plain message, no stack trace.
+        # User-facing config problem - plain message, no stack trace.
         log.error("Config error: %s", exc)
         emit(f"CONFIG ERROR:\n{exc}", error=True)
         log.info("Exit status: 1")

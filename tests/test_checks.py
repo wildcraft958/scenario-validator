@@ -507,7 +507,7 @@ class TestNegativeChecks:
         assert result.status == "FAIL", f"Expected FAIL for 150 km/h CCRs, got {result.status}: {result.comment}"
 
     def test_sc_06_north_heading_vut_passes(self, config):
-        """VUT heading 90° (north) should PASS — cardinal axis, any world direction is valid."""
+        """VUT heading 90° (north) should PASS - cardinal axis, any world direction is valid."""
         xml = b"""<?xml version="1.0" encoding="UTF-8"?>
         <OpenSCENARIO>
           <FileHeader description="CPNCO_Test" author="Test"/>
@@ -532,7 +532,7 @@ class TestNegativeChecks:
         )
 
     def test_sc_06_diagonal_heading_fails(self, config):
-        """VUT heading 45° (diagonal) should FAIL — not aligned to any cardinal axis."""
+        """VUT heading 45° (diagonal) should FAIL - not aligned to any cardinal axis."""
         import math
         diagonal_rad = math.radians(45)
         xml = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -704,7 +704,7 @@ class TestNegativeChecks:
         assert direction_rht == "Nearside", f"RHT: positive dh should be Nearside, got {direction_rht}"
 
     def test_sc_22_sov_exempt_from_ncap_folder(self, config):
-        """SOV may be 'a GVT or a real vehicle' per protocol — exempt from NCAP-folder rule."""
+        """SOV may be 'a GVT or a real vehicle' per protocol - exempt from NCAP-folder rule."""
         xml = b"""<?xml version="1.0" encoding="UTF-8"?>
         <OpenSCENARIO>
           <Entities>
@@ -863,7 +863,7 @@ class TestNegativeChecks:
 
     def test_real_ccfhol_impact_estimate_matches_design(self, config):
         """Real CCFhol export: with the EuroNCAP position metric (target reference point
-        across VUT width, §1.2.5) the impact is ~50% — matching the designed 50Imp. The
+        across VUT width, §1.2.5) the impact is ~50% - matching the designed 50Imp. The
         old band-overlap metric wrongly read 100% (dead-centre); that was a metric artifact."""
         import pathlib
         xosc_path = pathlib.Path("examples/CCFhol/AEB_CCFhol_30VUT_50GVT_50Imp.xosc")

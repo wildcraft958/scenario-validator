@@ -64,7 +64,7 @@ def get_entity_name(entity: Any) -> str:
 def get_entity_bbox(root: Any, entity_name: str) -> tuple[float, float, float, float] | None:
     """Returns (center_x, center_y, length, width) from the entity's BoundingBox, or None.
 
-    RoadRunner exports a BoundingBox per entity with Center x=0 y=0 — i.e. the
+    RoadRunner exports a BoundingBox per entity with Center x=0 y=0 - i.e. the
     WorldPosition IS the bounding-box centre. Values are parsed defensively;
     parameterized ($ref) values yield None.
     """
@@ -391,10 +391,10 @@ def get_polyline_part2_radius(
     Returns (None, "") when the trajectory has no clear curved section.
 
     Handedness convention (EuroNCAP Frontal v1.1 + ISO 8855):
-      LHT (left-hand traffic, drive on left — UK/Japan/India, EuroNCAP default):
+      LHT (left-hand traffic, drive on left - UK/Japan/India, EuroNCAP default):
         positive net heading change (CCW, left turn) = Farside (away from driver)
         negative net heading change (CW, right turn) = Nearside (towards driver)
-      RHT (right-hand traffic, drive on right — US/mainland Europe):
+      RHT (right-hand traffic, drive on right - US/mainland Europe):
         positive net heading change = Nearside (left turn goes to driver's near side)
         negative net heading change = Farside
     """
@@ -404,7 +404,7 @@ def get_polyline_part2_radius(
         return None, ""
 
     min_r = min(radii)
-    # Part 2 radii are the tightest — keep only those within part2_window_factor of minimum
+    # Part 2 radii are the tightest - keep only those within part2_window_factor of minimum
     part2_radii = [r for r in radii if r <= part2_window_factor * min_r]
     if not part2_radii:
         part2_radii = radii  # fallback

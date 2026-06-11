@@ -130,7 +130,7 @@ class CheckResult(BaseModel):
         return status_map[self.status]  # type: ignore[return-value]
 
     def as_validation_row(self) -> list[str]:
-        """Full row including Comment — for Excel only."""
+        """Full row including Comment - for Excel only."""
         return [
             self.check_id,
             self.category,
@@ -232,7 +232,7 @@ class ScenarioProtocol(BaseModel):
     # LENGTH instead of width (EuroNCAP Protocol §1.2.5).
     side_impact: bool = False
     # True when the scenario includes an SOV (overtaken vehicle) that the protocol
-    # permits to be "a GVT or a real vehicle" — drives the CH_SC_22 rename hint.
+    # permits to be "a GVT or a real vehicle" - drives the CH_SC_22 rename hint.
     has_sov: bool = False
 
     @field_validator("vut_speed_range_kmh")
@@ -286,7 +286,7 @@ class Config(BaseModel):
     # Upper bound for plausible entity speeds; speeds above this (or negative) are
     # flagged as garbage/incorrect by CH_MR_01.
     speed_sanity_max_kmh: float = 300.0
-    # Junction detection (CH_RD_03-06, CH_SC_10) is fully file-based — no scenario list.
+    # Junction detection (CH_RD_03-06, CH_SC_10) is fully file-based - no scenario list.
     # A junction is treated as a real EuroNCAP intersection (turning OR straight crossing)
     # when its incoming roads come from different directions: any two incoming-road headings
     # differing by more than this many degrees. Lane-structure/transition junctions connect
@@ -329,10 +329,10 @@ class Config(BaseModel):
     # Allowed deviation from the protocol Part 2 radius before a FAIL is issued (%).
     curve_radius_tolerance_pct: float = 20.0
     # Traffic handedness used for far-side / near-side classification (CH_SC_07, CH_SC_20).
-    # "LHT" = drive on left (UK/Japan/India — EuroNCAP default per Frontal v1.1 + ISO 8855).
-    # "RHT" = drive on right (US/mainland Europe) — inverts Farside/Nearside assignment.
+    # "LHT" = drive on left (UK/Japan/India - EuroNCAP default per Frontal v1.1 + ISO 8855).
+    # "RHT" = drive on right (US/mainland Europe) - inverts Farside/Nearside assignment.
     traffic_handedness: str = "LHT"
-    # Optional files reported by NM_03 — absent files do NOT cause FAIL.
+    # Optional files reported by NM_03 - absent files do NOT cause FAIL.
     optional_standalone_files: list[str] = []
     # Entity names exempt from the CH_SC_22 NCAP-folder rule. Per checklist Prerequisites,
     # the SOV (vehicle overtaken by VUT in CCFhol) "can either be a GVT or a real vehicle",
@@ -345,7 +345,7 @@ class Config(BaseModel):
     # any code edit when the convention grows.
     allowed_programs: list[str] = ["AEB"]
     target_type_tokens: list[str] = []          # GVT / EPTa / EPTc / EBTa / EMT / ...
-    # Acceptable OpenSCENARIO entity categories for each filename target token — lets
+    # Acceptable OpenSCENARIO entity categories for each filename target token - lets
     # CH_NM_02 catch a mislabeled filename (e.g. "30GVT" on a pedestrian-category target)
     # WITHOUT false-flagging RoadRunner's export reality: it has no cyclist/motorcyclist
     # OSC category, so EBTa/EMT legitimately export as <Vehicle>. Each token therefore maps
@@ -379,7 +379,7 @@ class Config(BaseModel):
                 raw = json.loads(config_path.read_text())
             except json.JSONDecodeError as exc:
                 raise ConfigError(
-                    f"{config_path.name} is not valid JSON — line {exc.lineno}, "
+                    f"{config_path.name} is not valid JSON - line {exc.lineno}, "
                     f"column {exc.colno}: {exc.msg}. Common causes: a comma after the "
                     f"last item in a list/section, a missing comma between items, or a "
                     f"missing quote. Tip: run 'python validator.py <dir> --check-config' "
@@ -418,7 +418,7 @@ class Config(BaseModel):
             raise ConfigError(
                 f"{config_path.name} has {len(problems)} invalid or missing value(s):\n"
                 + "\n".join(problems)
-                + "\n  Fix the value(s) listed above — see CONFIG_GUIDE.md for each key."
+                + "\n  Fix the value(s) listed above - see CONFIG_GUIDE.md for each key."
             ) from exc
         # One-place editing: adding a scenario under "scenarios" auto-registers its
         # tag for detection - no need to also edit naming_convention.valid_prefixes.

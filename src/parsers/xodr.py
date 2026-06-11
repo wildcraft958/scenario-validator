@@ -148,8 +148,8 @@ def get_junction_incoming_road_headings_deg(root: Any) -> list[float]:
 
 
 def has_intersection_junction(root: Any, min_spread_deg: float) -> bool:
-    """True if a junction connects roads from DIFFERENT directions — a real
-    intersection (turning OR straight crossing) — vs a lane-structure junction that
+    """True if a junction connects roads from DIFFERENT directions - a real
+    intersection (turning OR straight crossing) - vs a lane-structure junction that
     only links parallel roads.
 
     Detected purely from .xodr geometry, so NO scenario list is needed: if any two

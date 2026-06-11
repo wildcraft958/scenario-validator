@@ -69,7 +69,7 @@ class TestSC18TargetSpeed:
     def test_lower_boundary_speed_passes_via_design_token(self, config):
         """A 10 km/h VUT design whose measured speed reads 9.98 km/h (vertex discretisation) must
         PASS the [10, 25] CCFtap range. The exact filename token (10VUT) is graded, not the noisy
-        measurement — the boundary bug was a strict 9.98 < 10 compare that false-FAILed a valid
+        measurement - the boundary bug was a strict 9.98 < 10 compare that false-FAILed a valid
         band-edge speed."""
         from src.checks.naming import parse_scenario_filename
         from src.checks.scenario import check_sc_18

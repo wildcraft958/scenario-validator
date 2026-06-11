@@ -1,7 +1,7 @@
 """Robustness tests: mutation-based and protocol boundary tests using real example files.
 
 Each test mutates a parsed tree in memory, runs the check function, and asserts the
-expected verdict. This catches regressions that synthetic XMLs miss — the real
+expected verdict. This catches regressions that synthetic XMLs miss - the real
 RoadRunner export format has structural quirks that simple hand-crafted XML doesn't.
 """
 from __future__ import annotations
@@ -148,7 +148,7 @@ class TestRD02RoadSegments:
 
 class TestRD03JunctionRadius:
     def test_real_cpnco_manual_review(self, config):
-        """Real CPNCO has 13-20m lane-centre radii — all consistent with an 8m kerb,
+        """Real CPNCO has 13-20m lane-centre radii - all consistent with an 8m kerb,
         which RoadRunner does not export to .xodr → MANUAL_REVIEW (not FAIL)."""
         from src.checks.road import check_rd_03
         root = _load(CPNCO_XODR)
@@ -294,7 +294,7 @@ class TestSC06Heading:
         assert check_sc_06(self._xosc_with_vut_heading(math.pi), config).status == "PASS"
 
     def test_north_heading_passes(self, config):
-        """CPNCO VUT at 90° (north) must pass — cardinal axis."""
+        """CPNCO VUT at 90° (north) must pass - cardinal axis."""
         from src.checks.scenario import check_sc_06
         assert check_sc_06(self._xosc_with_vut_heading(math.pi / 2), config).status == "PASS"
 
@@ -312,13 +312,13 @@ class TestSC06Heading:
         assert check_sc_06(self._xosc_with_vut_heading(3 * math.pi / 4), config).status == "FAIL"
 
     def test_real_cpnco_passes(self, config):
-        """Real CPNCO has VUT heading 90° (north) — must pass."""
+        """Real CPNCO has VUT heading 90° (north) - must pass."""
         from src.checks.scenario import check_sc_06
         assert check_sc_06(_load(CPNCO_XOSC), config).status == "PASS"
 
 
 # ============================================================
-# CH_SC_07: Constant radius arc (Part 2)
+# CH_SC_07: Steady-state turn radius (constant-radius arc, Part 2)
 # ============================================================
 
 class TestSC07ConstantRadius:
@@ -348,7 +348,7 @@ class TestSC07ConstantRadius:
         from src.checks.scenario import check_sc_07
         from src.parsers import xosc
         # CPTA: expected 8.0m, tolerance 20% → accepts 6.4-9.6m
-        # Our estimate is ~8.2m — within band → PASS
+        # Our estimate is ~8.2m - within band → PASS
         root = _load(CPTA_XOSC)
         est, direction = xosc.get_polyline_part2_radius(root, "VUT")
         assert est is not None
@@ -549,7 +549,7 @@ class TestMR01SpeedSanity:
 
 class TestNM01ActorNaming:
     def test_sov_name_passes(self, config, tmp_path):
-        """Entity named 'SOV' should pass — SOV is in encap_actor_names."""
+        """Entity named 'SOV' should pass - SOV is in encap_actor_names."""
         from src.checks.naming import check_nm_01
         xosc_content = b"""<?xml version="1.0"?>
         <OpenSCENARIO>
@@ -637,13 +637,13 @@ class TestSC10JunctionWaypoints:
         assert "non-intersection" not in result.comment.lower()
 
     def test_cpnco_junction_coverage_passes(self, config):
-        """CPNCO is a real junction scenario — trajectory passes through junction → PASS."""
+        """CPNCO is a real junction scenario - trajectory passes through junction → PASS."""
         from src.checks.scenario import check_sc_10
         result = check_sc_10(_load(CPNCO_XOSC), _load(CPNCO_XODR), config, scenario_tag="CPNCO")
         assert result.status == "PASS"
 
     def test_cpta_junction_coverage_passes(self, config):
-        """CPTA is a junction turning scenario — trajectory must have junction coverage."""
+        """CPTA is a junction turning scenario - trajectory must have junction coverage."""
         from src.checks.scenario import check_sc_10
         result = check_sc_10(_load(CPTA_XOSC), _load(CPTA_XODR), config, scenario_tag="CPTA")
         assert result.status == "PASS"

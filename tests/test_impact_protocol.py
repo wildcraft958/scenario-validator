@@ -6,7 +6,7 @@ ACTOR and MOTION TYPE (§1.2.5 figures, §1.4.1 virtual boxes, §1.3.1 VUT profi
   - EPTa/EPTc: hip (turning) / back-centreline (longitudinal & crossing).
   - EBTa: front wheel (turning) / rear wheel (longitudinal) / crank shaft (crossing).
   - EMT: front wheel (turning/crossing/long-front) / rear wheel (long-rear).
-The current estimator used the target bbox CENTRE for everything — wrong for the long
+The current estimator used the target bbox CENTRE for everything - wrong for the long
 cyclist/motorcyclist boxes at an angle. These tests are written RED-first.
 """
 import math
@@ -54,7 +54,7 @@ def test_is_rear_approach():
 
 
 # ---------------------------------------------------------------------------
-# Actor resolver — OSC category is Vehicle for GVT/EBTa/EMT, so name/filename token decides
+# Actor resolver - OSC category is Vehicle for GVT/EBTa/EMT, so name/filename token decides
 # ---------------------------------------------------------------------------
 
 def test_resolve_actor_from_name_token():
@@ -121,7 +121,7 @@ def _perpendicular_crossing():
 def test_reference_offset_shifts_impact_for_angled_target():
     """KEYSTONE: for a target crossing at 90°, the front reference point (offset +0.4·L,
     i.e. ~0.72 m north of centre for a 1.8 m box) projects to a very different VUT-width %
-    than the centre — proving the per-actor reference point is not a cosmetic detail."""
+    than the centre - proving the per-actor reference point is not a cosmetic detail."""
     from src.geometry import estimate_trajectory_impact
     vut_bbox = (0.0, 0.0, 4.5, 1.8)
     tgt_bbox = (0.0, 0.0, 1.8, 0.6)  # cyclist-like long box
@@ -152,7 +152,7 @@ def test_real_ccftap_turn_across_uses_overlap_metric():
     """Real CCFtap (Car-to-Car Turn-Across-Path): near head-on while the VUT is mid-turn, so the
     single-point reference reading is corner-first unstable (§1.2.5.2) and lands ~88%. SC_16 must
     fall back to the rotation-robust overlap-centre estimate, which recovers the designed ~50%
-    impact (the front edges meet at 50% of the VUT width — EuroNCAP AEB C2C) and PASSES."""
+    impact (the front edges meet at 50% of the VUT width - EuroNCAP AEB C2C) and PASSES."""
     import pathlib
     xosc_path = pathlib.Path("examples/CCFtap/AEB_CCFtap_20VUT_45GVT_50Imp.xosc")
     if not xosc_path.exists():
@@ -204,7 +204,7 @@ def test_real_ccfhol_head_on_passes():
 
 
 def test_full_width_denominator_not_inset():
-    """§1.2.5 scales the % to the vehicle WIDTH edges (0%=outer right, 100%=outer left) —
+    """§1.2.5 scales the % to the vehicle WIDTH edges (0%=outer right, 100%=outer left) -
     the §1.3.1 profiled-line 50 mm inset is contact geometry, NOT the % denominator.
     A target centre on the VUT centreline must read 50.0%, not ~51.4% (which a width-100mm
     denominator would give)."""

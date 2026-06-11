@@ -18,7 +18,7 @@ _DESCRIPTIONS = {
     "CH_SC_04": "Total simulation time within protocol bounds (speed-dependent threshold)",
     "CH_SC_05": "VUT placed in right lane (negative lane ID); GVT lane placement is manual check",
     "CH_SC_06": "VUT heading ~0 deg (left-to-right travel); direction values require manual verification",
-    "CH_SC_07": "Curvature path part 2: constant radius detected (radius match to protocol is manual check)",
+    "CH_SC_07": "VUT turn steady-state turn radius (constant-radius arc between the entry/exit clothoids; EuroNCAP path Part 2) matches the protocol radius",
     "CH_SC_08": "Scenario satisfies applicable EuroNCAP protocol requirements (manual review required)",
     "CH_SC_09": "Static asset Init positions present (correctness per protocol requires manual check)",
     "CH_SC_10": "Trajectory does not start/end at intersection (SL.1); >=1 junction waypoint for crossing scenarios",
@@ -103,7 +103,7 @@ def check_sc_01(xosc_root: Any, config: Config) -> CheckResult:
                 "CH_SC_01",
                 "PASS",
                 f"Kinematic trajectory with {n} waypoints found for '{entity}' "
-                f"(RoadRunner path-based format — variations encoded as Init FollowTrajectoryAction, "
+                f"(RoadRunner path-based format - variations encoded as Init FollowTrajectoryAction, "
                 f"not ParameterDeclarations)",
             )
     return _make(
@@ -174,7 +174,7 @@ def check_sc_04(xosc_root: Any, config: Config) -> CheckResult:
 
     if config.simulation_time_by_speed_s:
         vut = _identify_vut(xosc_root, config)
-        # SC_04 grades the .xosc StopTrigger SimulationTimeCondition — the full scene duration,
+        # SC_04 grades the .xosc StopTrigger SimulationTimeCondition - the full scene duration,
         # which the real RoadRunner exports set to 100-150 s regardless of VUT speed. The
         # simulation_time_by_speed_s bands (35-60 s) describe the protocol maneuver/approach
         # time, NOT the scene StopTrigger, so they are intentionally only consulted when an Init
@@ -295,14 +295,17 @@ def check_sc_06(xosc_root: Any, config: Config) -> CheckResult:
 
 def check_sc_07(xosc_root: Any, config: Config) -> CheckResult:
     """
-    Curvature path part 2: constant radius detected.
-    Checks Clothoid elements first; falls back to polyline vertex heading analysis for
-    RoadRunner kinematic exports which use Polyline instead of Clothoid.
+    Steady-state turn radius: the constant-radius arc of the VUT turn.
 
-    Scope note: the protocol turn is a 3-segment clothoid-arc-clothoid with entry/exit angles
-    (alpha/beta, Frontal v1.1 Table 1.2.4). The validated, non-brittle check here is the Part-2
-    constant-arc radius against the protocol table; the RR polyline export does not expose the
-    clothoid transition parameters cleanly, so the entry/exit-angle check stays manual.
+    The EuroNCAP turn path is a 3-segment clothoid, fixed-radius arc, clothoid (the protocol
+    labels them Part 1 / Part 2 / Part 3, Frontal v1.1 Table 1.2.4). The constant-radius arc in
+    the middle (Part 2) is the steady-state cornering radius an engineer sets from the test table.
+    Checks Clothoid elements first; falls back to polyline vertex heading analysis for RoadRunner
+    kinematic exports which use Polyline instead of Clothoid.
+
+    Scope note: the validated, non-brittle check here is the steady-state arc radius against the
+    protocol table; the RR polyline export does not expose the clothoid transition parameters
+    (entry/exit angles alpha/beta) cleanly, so that part of the path stays a manual check.
     """
     # --- Primary: Clothoid/ClothoidSpline (standard OSC) ---
     constant_segments: list[float] = []
@@ -328,17 +331,18 @@ def check_sc_07(xosc_root: Any, config: Config) -> CheckResult:
                 "CH_SC_07",
                 "FAIL",
                 f"Non-constant curvature: curvStart != curvEnd in {len(varying_segments)} segment(s). "
-                f"Values: {varying_segments}. Part 2 requires curvStart == curvEnd.",
+                f"Values: {varying_segments}. The steady-state arc requires curvStart == curvEnd.",
             )
         radii = constant_segments
         if len(set(round(r, 1) for r in radii)) == 1:
-            return _make("CH_SC_07", "PASS", f"Constant curvature radius = {radii[0]:.2f} m (Clothoid)")
+            return _make("CH_SC_07", "PASS",
+                         f"Steady-state turn radius = {radii[0]:.2f} m (constant-radius arc, Clothoid)")
         spread = max(radii) - min(radii)
         return _make(
             "CH_SC_07",
             "FAIL",
-            f"Curvature radius varies: {min(radii):.2f}–{max(radii):.2f} m "
-            f"(spread {spread:.2f} m). Should be constant for part 2.",
+            f"Turn radius varies: {min(radii):.2f} to {max(radii):.2f} m "
+            f"(spread {spread:.2f} m). The steady-state arc should be a single constant radius.",
         )
 
     # --- Fallback: Polyline vertex heading analysis (RoadRunner kinematic format) ---
@@ -346,8 +350,8 @@ def check_sc_07(xosc_root: Any, config: Config) -> CheckResult:
     if not vut:
         return _make("CH_SC_07", "NA", "No Clothoid trajectory and no VUT identified")
 
-    # Use Part 2 isolation: filter to ≤ 1.2× minimum radius to strip clothoid transitions.
-    # The minimum curvature radius in the curved section IS the Part 2 constant arc.
+    # Isolate the steady-state arc: filter to <= 1.2x minimum radius to strip the clothoid
+    # transitions. The minimum curvature radius in the curved section IS the constant-radius arc.
     est_radius, direction = xosc.get_polyline_part2_radius(
         xosc_root, vut,
         min_heading_delta_rad=config.curvature_min_heading_delta_rad,
@@ -355,15 +359,15 @@ def check_sc_07(xosc_root: Any, config: Config) -> CheckResult:
         handedness=config.traffic_handedness,
     )
     if est_radius is None:
-        return _make("CH_SC_07", "NA", "VUT heading is constant — not a turning scenario")
+        return _make("CH_SC_07", "NA", "VUT heading is constant, not a turning scenario")
 
-    # Look up the expected Part 2 radius from the protocol table in config.
+    # Look up the expected steady-state turn radius from the protocol table in config.
     # Indexed by (vut_speed ≤ vut_speed_max_kmh) and direction.
     vut_speed_kmh = xosc.get_trajectory_speed_kmh(xosc_root, vut)
     expected_radius: float | None = None
 
     if vut_speed_kmh is not None and config.curve_part2_radii_m:
-        # Allow 5% tolerance on the speed boundary — trajectory vertex discretisation
+        # Allow 5% tolerance on the speed boundary - trajectory vertex discretisation
         # causes the computed peak speed to be slightly above the nominal value
         # (e.g. 10.035 km/h for a 10 km/h scenario).
         candidates = [
@@ -384,26 +388,26 @@ def check_sc_07(xosc_root: Any, config: Config) -> CheckResult:
             return _make(
                 "CH_SC_07",
                 "PASS",
-                f"Part 2 constant arc: measured ~{est_radius:.1f} m "
+                f"Steady-state turn radius (constant-radius arc): measured ~{est_radius:.1f} m "
                 f"(expected {expected_radius:.2f} m for {direction} at {vut_speed_kmh:.0f} km/h, "
-                f"Δ{deviation_pct:.1f}% within ±{tol_pct:.0f}% tolerance).",
+                f"deviation {deviation_pct:.1f}% within +/-{tol_pct:.0f}% tolerance).",
             )
         return _make(
             "CH_SC_07",
             "FAIL",
-            f"Part 2 arc radius mismatch: measured ~{est_radius:.1f} m, "
+            f"Steady-state turn radius mismatch: measured ~{est_radius:.1f} m, "
             f"protocol requires {expected_radius:.2f} m for {direction} at {vut_speed_kmh:.0f} km/h "
-            f"(deviation {deviation_pct:.1f}% > ±{tol_pct:.0f}% tolerance). "
-            f"Rebuild the path in RoadRunner with the correct curve radius.",
+            f"(deviation {deviation_pct:.1f}% greater than the +/-{tol_pct:.0f}% tolerance). "
+            f"Rebuild the path in RoadRunner with the correct turn radius.",
         )
 
-    # Speed or protocol entry not found — fall back to informational MANUAL_REVIEW
+    # Speed or protocol entry not found - fall back to informational MANUAL_REVIEW
     speed_str = f"{vut_speed_kmh:.0f} km/h" if vut_speed_kmh else "unknown speed"
     return _make(
         "CH_SC_07",
         "MANUAL_REVIEW",
-        f"Curved trajectory detected: ~{est_radius:.1f} m Part 2 radius ({direction}, {speed_str}). "
-        f"No protocol entry for this speed/direction combination — "
+        f"Curved trajectory detected: ~{est_radius:.1f} m steady-state turn radius "
+        f"({direction}, {speed_str}). No protocol entry for this speed/direction combination, "
         f"add to config.curve_part2_radii_m or verify in RoadRunner.",
     )
 
@@ -502,7 +506,7 @@ def check_sc_10(xosc_root: Any, xodr_root: Any, config: Config, scenario_tag: st
     Checked together for entities with >=3 waypoints (approach-junction-exit pattern).
 
     A real EuroNCAP intersection (turning OR straight crossing) is identified purely from
-    the .xodr — its incoming roads come from different directions — via
+    the .xodr - its incoming roads come from different directions - via
     xodr.has_intersection_junction. Lane-structure junctions (parallel roads) are excluded.
     """
     waypoints_by_entity = xosc.get_all_waypoints_by_entity(xosc_root)
@@ -738,7 +742,7 @@ def check_sc_14(xosc_root: Any, config: Config) -> CheckResult:
 
     # Also catch entities that have explicit init_spd=0 and no trajectory but are not
     # name-matched (e.g. LargeObstructionVehicle, SmallObstructionVehicle). These are
-    # unambiguously static — no trajectory and speed explicitly set to 0.
+    # unambiguously static - no trajectory and speed explicitly set to 0.
     explicit_static = [
         e for e in entities
         if e != vut and e not in name_matched
@@ -798,7 +802,7 @@ def check_sc_15(xosc_root: Any, config: Config, parsed_name: Any = None) -> Chec
             designed_moving = {e for e in emt_candidates if token_type.upper() in e.upper()}
 
     # Entities with a kinematic trajectory are actively moving in this scenario
-    # (e.g. EPTa/EPTc in crossing scenarios). Skip them — they are correctly moving.
+    # (e.g. EPTa/EPTc in crossing scenarios). Skip them - they are correctly moving.
     moving = {e for e in emt_candidates if xosc.has_init_follow_trajectory(xosc_root, e)} | designed_moving
     stationary = [e for e in emt_candidates if e not in moving]
     moving_via_traj = sorted(moving)
@@ -808,12 +812,12 @@ def check_sc_15(xosc_root: Any, config: Config, parsed_name: Any = None) -> Chec
             "CH_SC_15",
             "NA",
             f"All matched EuroNCAP targets ({', '.join(moving_via_traj)}) use kinematic trajectories "
-            f"— they are moving actors in this scenario, not stationary targets. No zero-speed check needed.",
+            f"- they are moving actors in this scenario, not stationary targets. No zero-speed check needed.",
         )
 
     results = [_check_zero_speed(xosc_root, config, e, "CH_SC_15") for e in stationary]
     fails = [r for r in results if r.status == "FAIL"]
-    suffix = (f" Note: {', '.join(moving_via_traj)} skipped (kinematic trajectory — moving actor)."
+    suffix = (f" Note: {', '.join(moving_via_traj)} skipped (kinematic trajectory - moving actor)."
               if moving_via_traj else "")
     if not fails:
         if stationary:
@@ -831,7 +835,7 @@ def _synth_straight_trajectory(
     Parametric scenarios (no Init FollowTrajectoryAction) carry no path, so this
     synthesises one: the actor travels in a straight line along its Init heading at
     its Init speed. That lets the SAME §1.2.5 impact estimator (estimate_trajectory_impact)
-    run on parametric scenarios — there is no second, divergent impact metric.
+    run on parametric scenarios - there is no second, divergent impact metric.
     """
     positions = xosc.get_init_positions(xosc_root)
     if name not in positions:
@@ -898,7 +902,7 @@ def resolve_actor(
     """Resolve the EuroNCAP target type {GVT, SOV, EPTa, EPTc, EBTa, EMT}.
 
     OSC category alone cannot distinguish GVT/EBTa/EMT (RoadRunner exports all three as
-    <Vehicle>), so use the entity-name token first (authoritative — names carry the token,
+    <Vehicle>), so use the entity-name token first (authoritative - names carry the token,
     e.g. 'EPTc_Trajectory'), then the filename target token, then a bbox aspect-ratio
     fallback. EPTc is tested before EPTa (substring)."""
     tokens = ("EPTc", "EPTa", "EBTa", "EMT", "GVT", "SOV")
@@ -926,7 +930,7 @@ def target_reference_offset(actor: str, motion: str, is_rear: bool) -> tuple[flo
     a = (actor or "").upper()
     if a in ("EPTA", "EPTC"):                       # pedestrian
         # longitudinal (CPLA): VUT strikes the dummy's BACK (centreline-crosses-box point).
-        # turning (hip) and crossing (struck mid-body) ≈ the dummy centre — the 0.5 m box
+        # turning (hip) and crossing (struck mid-body) ≈ the dummy centre - the 0.5 m box
         # makes the exact point low-sensitivity anyway.
         return (-0.25, 0.0) if motion == "longitudinal" else (0.0, 0.0)
     if a == "EBTA":                                 # cyclist
@@ -961,18 +965,18 @@ def _impact_verdict(
 ) -> CheckResult:
     """Estimate the designed impact location (§1.2.5) and grade it against `expected`.
 
-    The validator's USP — pre-HIL design feedback the RoadRunner GUI cannot show.
+    The validator's USP - pre-HIL design feedback the RoadRunner GUI cannot show.
     Primary path: RoadRunner kinematic exports are the UNBRAKED design paths (AEB only
     exists in the real/HIL test), so stepping both actors' exported trajectories +
     bounding boxes to the designed first-contact instant gives the impact geometry.
     Parametric scenarios carry no path, so a straight trajectory is SYNTHESISED from
-    each actor's Init pose + speed (see _synth_straight_trajectory) — the SAME §1.2.5
+    each actor's Init pose + speed (see _synth_straight_trajectory) - the SAME §1.2.5
     metric, never a second divergent one.
 
     Metric (§1.2.5, directional): the target reference point across the VUT WIDTH
     (0% = outer right edge, 100% = outer left); side-impact scenarios (CMCscp, CBTAfs,
     CBTAns) across the VUT LENGTH (0% = rear, 100% = front). The estimate is compared
-    STRAIGHT to the designed %, both in the 0%=right/rear convention (no min() fold —
+    STRAIGHT to the designed %, both in the 0%=right/rear convention (no min() fold -
     a mirror-image design error must FAIL, not be silently matched to the near edge).
     """
     targets = _identify_targets(xosc_root, config)
@@ -980,7 +984,7 @@ def _impact_verdict(
         return _make(
             check_id, "MANUAL_REVIEW",
             f"No target entity identified. Expected ~{expected}% ±{tolerance}% per "
-            f"protocol — verify in RoadRunner.",
+            f"protocol - verify in RoadRunner.",
         )
     tgt = targets[0]
     tgt_bbox = _entity_bbox(xosc_root, config, tgt)
@@ -1017,7 +1021,7 @@ def _impact_verdict(
         return _make(
             check_id, "FAIL",
             f"Impact estimate: VUT and {tgt} bounding boxes NEVER meet along the design "
-            f"paths (closest approach {gap}). Expected ~{expected}% impact — the scenario "
+            f"paths (closest approach {gap}). Expected ~{expected}% impact - the scenario "
             f"timing/lateral design does not produce the collision. Adjust in RoadRunner.",
         )
 
@@ -1031,7 +1035,7 @@ def _impact_verdict(
         )
     src = ("synthesised straight paths from Init pose+speed" if synthesised
            else "unbraked design trajectories + exported bounding boxes")
-    side_note = (" (side-impact length axis — unvalidated locally; no CMCscp/CBTAfs/CBTAns "
+    side_note = (" (side-impact length axis - unvalidated locally; no CMCscp/CBTAfs/CBTAns "
                  "example exists, confirm in HIL)" if side_impact else "")
     ref_desc = {(-0.5, 0.0): "rear", (0.5, 0.0): "front", (0.4, 0.0): "front wheel",
                 (-0.4, 0.0): "rear wheel", (-0.25, 0.0): "back", (0.0, 0.0): "centre"}.get(
@@ -1042,7 +1046,7 @@ def _impact_verdict(
     # path), the impacting corner contacts BEFORE the target reference point reaches the impact
     # plane, so the single-point reference reading sweeps across the whole VUT width within the
     # ±0.1 s sync window (high sensitivity) and lands far from the designed location. In that
-    # regime switch to the overlap-centre — the lateral midpoint of where the target footprint
+    # regime switch to the overlap-centre - the lateral midpoint of where the target footprint
     # covers the VUT, which is steady through the corner-first transient and recovers the
     # protocol overlap location (EuroNCAP AEB C2C: the front edges meet at the designed overlap
     # of the VUT width, reference line = VUT centreline). Only switch when the overlap metric is
@@ -1057,7 +1061,7 @@ def _impact_verdict(
         sensitivity = overlap_sens
         metric_note = (
             " Uses the rotation-robust §1.2.5.2 overlap-centre estimate (the reference-point "
-            "reading is unstable here — the impacting corner contacts before the reference "
+            "reading is unstable here - the impacting corner contacts before the reference "
             "point reaches the impact plane)."
         )
 
@@ -1069,11 +1073,20 @@ def _impact_verdict(
         f"Computed from {src} (no AEB by design); §1.2.5 impact location across VUT "
         f"{axis}{side_note}.{metric_note} Confirm in HIL."
     )
+    # A narrow VRU (motorcycle/cyclist/pedestrian) in a turning or crossing impact covers only a
+    # thin band of the VUT width, so its impact location slides across the width within the sync
+    # window and cannot be pinned by design-time kinematics; flag that explicitly on a MANUAL.
+    vru_note = (
+        " Narrow VRU target in a turning impact, so the impact location cannot be pinned at "
+        "design time; HIL confirms."
+        if actor in ("EPTa", "EPTc", "EBTa", "EMT") and motion in ("turning", "crossing")
+        else ""
+    )
     # Uncertainty-aware verdict (derived from geometry, not the scenario name). The estimate
     # carries a kinematic uncertainty = how far the impact % swings across the ±0.1 s SCP sync
     # window. PASS when it lands on the design within tolerance; MANUAL_REVIEW when the design
-    # value still lies inside that uncertainty band (geometry the kinematics cannot pin down —
-    # §1.2.5.2 — so we can neither confirm nor reject it); FAIL only when the estimate is
+    # value still lies inside that uncertainty band (geometry the kinematics cannot pin down -
+    # §1.2.5.2 - so we can neither confirm nor reject it); FAIL only when the estimate is
     # confidently off (far from the design AND the geometry is stable).
     miss = abs(computed - expected)
     if miss <= tolerance:
@@ -1087,13 +1100,13 @@ def _impact_verdict(
             check_id, "MANUAL_REVIEW",
             f"Impact estimate {computed:.1f}% vs protocol {expected:.0f}% ±{tolerance:.0f}% "
             f"({detail}). The design value is within the estimate's kinematic uncertainty "
-            f"(the impact % swings ±{sensitivity:.0f}% across the ±0.1 s sync window — "
+            f"(the impact % swings ±{sensitivity:.0f}% across the ±0.1 s sync window, "
             f"rotating/fast geometry), so design-time kinematics can neither confirm nor "
-            f"reject it; verify the impact location in RoadRunner. {basis}",
+            f"reject it; verify the impact location in RoadRunner.{vru_note} {basis}",
         )
     return _make(
         check_id, "FAIL",
-        f"Geometric impact estimate {computed:.1f}% — expected {expected:.0f}% "
+        f"Geometric impact estimate {computed:.1f}% - expected {expected:.0f}% "
         f"±{tolerance:.0f}% ({detail}). The design does not produce the intended impact "
         f"point; adjust the scenario in RoadRunner before HIL. {basis}",
     )
@@ -1103,7 +1116,7 @@ def _collision_course_note(xosc_root: Any, config: Config, vut: str) -> str:
     """Time-decoupled path-intersection test for kinematic scenarios.
 
     The impact % itself IS estimated geometrically by _impact_verdict; this is only
-    the fallback note used when that estimate cannot be computed — whether the two
+    the fallback note used when that estimate cannot be computed - whether the two
     designed PATHS intersect is pure geometry. Returns a note for the comment.
     """
     targets = _identify_targets(xosc_root, config)
@@ -1119,7 +1132,7 @@ def _collision_course_note(xosc_root: Any, config: Config, vut: str) -> str:
         )
     if vut_verts and tgt_verts:
         return (
-            f" WARNING: VUT and {targets[0]} paths do NOT geometrically intersect — "
+            f" WARNING: VUT and {targets[0]} paths do NOT geometrically intersect - "
             f"verify the scenario layout."
         )
     return ""
@@ -1132,7 +1145,7 @@ def check_sc_16(
     """Impact % for turning/crossing ≈ protocol value (±5%).
 
     USP: the validator estimates the designed §1.2.5 impact location (see _impact_verdict)
-    — from the exported trajectories for RoadRunner kinematic scenarios, or from a straight
+    - from the exported trajectories for RoadRunner kinematic scenarios, or from a straight
     trajectory synthesised from Init pose+speed for parametric ones. Pre-HIL design
     verification the RoadRunner GUI cannot show; HIL remains the final authority.
     """
@@ -1233,12 +1246,19 @@ def _target_speed_crosscheck(
     measured = _entity_speed_kmh(xosc_root, name)
     if measured is None:
         return None, None
-    if abs(measured - token_kmh) > max(1.5, 0.05 * token_kmh):
+    # Tolerance: +/-5% of the design token, with a 1.5 km/h floor for low speeds.
+    tol = max(1.5, 0.05 * token_kmh)
+    dev_pct = abs(measured - token_kmh) / token_kmh * 100 if token_kmh else 0.0
+    if abs(measured - token_kmh) > tol:
         return (
             f"filename target token says {token_kmh} km/h {target_type} but the .xosc "
-            f"'{name}' speed is {measured:.1f} km/h - likely a naming mistake; verify."
+            f"'{name}' speed is {measured:.1f} km/h ({dev_pct:.1f}% off, beyond the "
+            f"+/-5% (1.5 km/h floor) check); likely a naming mistake, verify."
         ), None
-    return None, f"target '{name}' {measured:.1f} km/h matches the {token_kmh} km/h {target_type} token"
+    return None, (
+        f"target '{name}' {measured:.1f} km/h is within +/-5% (1.5 km/h floor) of the "
+        f"{token_kmh} km/h {target_type} token"
+    )
 
 
 def check_sc_18(
@@ -1286,13 +1306,17 @@ def check_sc_18(
     vut_speed_kmh = vut_speed_ms * 3.6
 
     # Cross-check the filename VUT token against the measured .xosc speed (naming mistake).
+    # Tolerance: +/-5% of the token, 1.5 km/h floor (same rule as the target cross-check).
     if parsed_name is not None and getattr(parsed_name, "vut_speed_kmh", None) is not None:
-        if abs(vut_speed_kmh - parsed_name.vut_speed_kmh) > max(1.5, 0.05 * parsed_name.vut_speed_kmh):
+        vtok = parsed_name.vut_speed_kmh
+        if abs(vut_speed_kmh - vtok) > max(1.5, 0.05 * vtok):
+            vdev = abs(vut_speed_kmh - vtok) / vtok * 100 if vtok else 0.0
             return _make(
                 "CH_SC_18",
                 "MANUAL_REVIEW",
-                f"Filename says {parsed_name.vut_speed_kmh} km/h VUT but the .xosc trajectory is "
-                f"{vut_speed_kmh:.1f} km/h ({speed_source}) - likely a naming mistake; verify.",
+                f"Filename says {vtok} km/h VUT but the .xosc trajectory is "
+                f"{vut_speed_kmh:.1f} km/h ({speed_source}; {vdev:.1f}% off, beyond the "
+                f"+/-5% (1.5 km/h floor) check); likely a naming mistake, verify.",
             )
 
     target_mismatch, target_verified = _target_speed_crosscheck(xosc_root, config, parsed_name)
@@ -1492,7 +1516,7 @@ def check_sc_21(xosc_root: Any, config: Config) -> CheckResult:
             "CH_SC_21",
             "PASS",
             f"VUT '{init_order[0]}' is first in Init/Private ordering "
-            f"(RoadRunner kinematic format — no ManeuverGroup actor refs)",
+            f"(RoadRunner kinematic format - no ManeuverGroup actor refs)",
         )
     return _make(
         "CH_SC_21",
@@ -1507,7 +1531,7 @@ def check_sc_22(xosc_root: Any, config: Config, scenario_tag: str | None = None)
     All obstructions placed in NCAP Asset folder.
 
     Official checklist wording: "All obstructions should be placed in NCAP Asset folder in RR".
-    VUT is excluded — it is an OEM custom model not expected in the NCAP Asset folder.
+    VUT is excluded - it is an OEM custom model not expected in the NCAP Asset folder.
     SOV entities (config.sov_entity_names) are exempt: per checklist Prerequisites the SOV
     "can either be a GVT or a real vehicle", so a non-NCAP path is protocol-legal.
     Accepts both inline model3d properties and OpenSCENARIO CatalogReference elements;
@@ -1517,7 +1541,7 @@ def check_sc_22(xosc_root: Any, config: Config, scenario_tag: str | None = None)
     vut = _identify_vut(xosc_root, config)
     sov_names = {n.upper() for n in getattr(config, "sov_entity_names", ["SOV"])}
 
-    # Remove VUT — only targets and static obstructions are required to use NCAP assets
+    # Remove VUT - only targets and static obstructions are required to use NCAP assets
     non_vut = {name: (path, src) for name, (path, src) in entity_sources.items() if name != vut}
 
     if not non_vut:
@@ -1537,7 +1561,7 @@ def check_sc_22(xosc_root: Any, config: Config, scenario_tag: str | None = None)
             continue
         if entity_name.upper() in sov_names:
             ok_items.append(
-                f"'{entity_name}' [{src}] exempt — SOV may be GVT or real vehicle per protocol"
+                f"'{entity_name}' [{src}] exempt - SOV may be GVT or real vehicle per protocol"
             )
         elif path.startswith("$") or path.startswith("%"):
             param_refs.append(f"'{entity_name}' ({src}: {path})")
@@ -1555,7 +1579,7 @@ def check_sc_22(xosc_root: Any, config: Config, scenario_tag: str | None = None)
         if proto and getattr(proto, "has_sov", False):
             msg += (
                 f" This scenario includes an SOV: if one of these is the overtaken vehicle, "
-                f"rename it to one of {sorted(sov_names)} (see CH_NM_01) — "
+                f"rename it to one of {sorted(sov_names)} (see CH_NM_01) - "
                 f"the SOV is permitted to be a real vehicle per protocol."
             )
         if param_refs:
@@ -1566,7 +1590,7 @@ def check_sc_22(xosc_root: Any, config: Config, scenario_tag: str | None = None)
         return _make(
             "CH_SC_22",
             "MANUAL_REVIEW",
-            f"Asset reference(s) are parameterized — cannot verify at parse time: {'; '.join(param_refs)}. "
+            f"Asset reference(s) are parameterized - cannot verify at parse time: {'; '.join(param_refs)}. "
             "Confirm they resolve to the NCAP Asset folder in RoadRunner.",
         )
 

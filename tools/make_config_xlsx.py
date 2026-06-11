@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate config.xlsx from config.json — the non-developer configuration interface.
+"""Generate config.xlsx from config.json - the non-developer configuration interface.
 
 Usage:
     python tools/make_config_xlsx.py [--json PATH] [--out PATH]
@@ -8,12 +8,12 @@ The validator accepts either file directly:
     python validator.py <scenario_dir> --config config.xlsx
 
 Sheets produced (the loader in src/models.py reads exactly this layout):
-    Protocol Constants  — EuroNCAP values. DO NOT EDIT unless the protocol changes.
-    Site Settings       — entity names, file lists, tolerances. Edit freely.
-    Scenarios           — one row per scenario family. Add rows for new scenarios.
-    Vehicle Dimensions  — bounding-box fallbacks used when the .xosc has none.
-    Curve Radii         — protocol Part 2 turn radii (EuroNCAP Table 1.2.4).
-    Sim Time Bands      — speed-dependent simulation-time limits.
+    Protocol Constants  - EuroNCAP values. DO NOT EDIT unless the protocol changes.
+    Site Settings       - entity names, file lists, tolerances. Edit freely.
+    Scenarios           - one row per scenario family. Add rows for new scenarios.
+    Vehicle Dimensions  - bounding-box fallbacks used when the .xosc has none.
+    Curve Radii         - protocol Part 2 turn radii (EuroNCAP Table 1.2.4).
+    Sim Time Bands      - speed-dependent simulation-time limits.
 
 Re-run this script after devs change config.json to keep the two formats in sync.
 """
@@ -36,7 +36,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 # src/models.py (edited in code, not per-site), so it stays out of the Excel sheets and
 # the json<->xlsx round-trip self-test below.
 _KEY_SHEET = {
-    # ---- Protocol Constants (EuroNCAP — do not edit) ----
+    # ---- Protocol Constants (EuroNCAP - do not edit) ----
     "protocol_version": ("Protocol Constants", "Protocol label printed on every report header."),
     "lane_width_m": ("Protocol Constants", "EuroNCAP lane width. CH_RD_01 checks every driving lane against this."),
     "junction_radius_m": ("Protocol Constants", "EuroNCAP junction corner (kerb) radius. CH_RD_03."),
@@ -44,7 +44,7 @@ _KEY_SHEET = {
     "simulation_time_max_s": ("Protocol Constants", "Fallback maximum simulation time. CH_SC_04."),
     "expected_decel_ms2": ("Protocol Constants", "Required braking deceleration for braking scenarios. CH_MR_02."),
     # ---- Site Settings (edit freely) ----
-    "traffic_handedness": ("Site Settings", "LHT = drive on left (Japan/India/UK — EuroNCAP default). RHT inverts Farside/Nearside."),
+    "traffic_handedness": ("Site Settings", "LHT = drive on left (Japan/India/UK - EuroNCAP default). RHT inverts Farside/Nearside."),
     "vut_entity_names": ("Site Settings", "Names accepted for the vehicle under test (comma-separated)."),
     "encap_actor_names": ("Site Settings", "Allowed target actor name prefixes per EuroNCAP (comma-separated)."),
     "sov_entity_names": ("Site Settings", "Entities exempt from the NCAP-asset-folder rule (SOV may be a real vehicle)."),
@@ -203,7 +203,7 @@ def main() -> int:
     a = Config.load(Path(args.json)).model_dump()
     b = Config.load(Path(args.out)).model_dump()
     # prefix ORDER is irrelevant (prefix matching) and the in-JSON 'description'
-    # doc note has no behavioural effect — normalise both before comparing.
+    # doc note has no behavioural effect - normalise both before comparing.
     for d in (a, b):
         d["naming_convention"] = sorted(d["naming_convention"].get("valid_prefixes", []))
     if a != b:

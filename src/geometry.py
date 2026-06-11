@@ -2,7 +2,7 @@
 
 The validator's USP: RoadRunner kinematic exports are the UNBRAKED design paths,
 so stepping both actors through their exported trajectories and intersecting their
-bounding boxes finds the designed first-contact geometry — pre-HIL design feedback
+bounding boxes finds the designed first-contact geometry - pre-HIL design feedback
 the RoadRunner GUI cannot show.
 
 Impact location follows EuroNCAP Protocol Crash Avoidance Frontal Collisions v1.1
@@ -25,16 +25,16 @@ class ImpactEstimate(NamedTuple):
     """Result of estimate_trajectory_impact().
 
     EuroNCAP impact-location convention (§1.2.5): the impact location is WHERE the
-    target reference point coincides with the %-age of the VUT width — 0% = outer
+    target reference point coincides with the %-age of the VUT width - 0% = outer
     RIGHT edge, 100% = outer LEFT edge (50% = centreline). Side-impact scenarios
-    (CMCscp, CBTAfs, CBTAns) use the VUT LENGTH instead — 0% = rearmost,
+    (CMCscp, CBTAfs, CBTAns) use the VUT LENGTH instead - 0% = rearmost,
     100% = forwardmost. Values may fall outside [0, 100] (the protocol matrices use
     −25%…125%), so neither axis is clamped.
     """
     contact: bool
     t_contact: float | None            # first bbox-touch instant (s), None if no contact
     impact_pct_width: float | None     # struck point across VUT WIDTH (0%=right edge,100%=left)
-    impact_pct_length: float | None    # struck point across VUT LENGTH (0%=rear,100%=front) — side impacts
+    impact_pct_length: float | None    # struck point across VUT LENGTH (0%=rear,100%=front) - side impacts
     lateral_offset_m: float | None     # target reference-point lateral offset in VUT frame at contact
     rel_heading_deg: float | None      # |target heading − VUT heading| at contact
     min_gap_m: float | None            # closest approach when no contact
@@ -48,7 +48,7 @@ class ImpactEstimate(NamedTuple):
     # heading-rotation corner-first effect makes the reference-point reading sweep wildly, this
     # overlap-centre stays stable and recovers the protocol impact-location (the front edges
     # meeting with the designed overlap of the VUT width). overlap_sensitivity_pct is its own
-    # ±0.1 s swing — the caller switches to it only when it is steadier than the reference point.
+    # ±0.1 s swing - the caller switches to it only when it is steadier than the reference point.
     impact_pct_width_overlap: float | None = None
     impact_pct_length_overlap: float | None = None
     overlap_sensitivity_pct: float | None = None
@@ -109,16 +109,16 @@ def estimate_trajectory_impact(
       - impact_pct_width  = the reference point across the VUT WIDTH (0% = outer right
         edge, 100% = outer left), read when the reference point reaches the VUT FRONT
         profile plane (reading at reference-point coincidence, not the first bbox-corner
-        touch — §1.2.5.2).
+        touch - §1.2.5.2).
       - impact_pct_length = the reference point across the VUT LENGTH (0% = rear,
         100% = front) when `side_impact` is set (CMCscp, CBTAfs, CBTAns), read when the
         reference point reaches the struck VUT SIDE plane.
 
     Neither axis is clamped (the protocol matrices allow −25%…125%). The % scale is the
-    FULL vehicle width/length — §1.2.5 fixes 0%/100% at the vehicle edges; the §1.3.1
+    FULL vehicle width/length - §1.2.5 fixes 0%/100% at the vehicle edges; the §1.3.1
     50 mm profiled-line inset is contact geometry, not the % scale.
 
-    Caveat: constant-trajectory kinematics, no physics — design verification only;
+    Caveat: constant-trajectory kinematics, no physics - design verification only;
     HIL remains the final authority. Returns None when either vertex list is empty.
     """
     if not vut_verts or not tgt_verts:
@@ -214,8 +214,8 @@ def estimate_trajectory_impact(
     # Rotation-robust §1.2.5.2 overlap-centre metric. In heading-rotation / high-closing-speed
     # impacts (turn-across-path) the corner edge contacts BEFORE the target reference point
     # reaches the impact location, so the single-point reference reading sweeps across the whole
-    # VUT width in the sync window (high eval_sensitivity_pct above). The overlap CENTRE — the
-    # lateral midpoint of where the target footprint covers the VUT extent — is stable through
+    # VUT width in the sync window (high eval_sensitivity_pct above). The overlap CENTRE - the
+    # lateral midpoint of where the target footprint covers the VUT extent - is stable through
     # that corner-first transient and recovers the protocol impact location (EuroNCAP AEB C2C:
     # "the front edges meet with a lateral position that gives the designed overlap of the VUT
     # width", reference line = VUT centreline). The caller uses it only when it is steadier than

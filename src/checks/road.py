@@ -91,7 +91,7 @@ def check_rd_02(root: Any, config: Config) -> CheckResult:
 
 
 def _junction_geometry_applies(root: Any, config: Config) -> tuple[bool, str]:
-    """Decide whether the intersection geometry checks (RD_03-06) apply — purely from
+    """Decide whether the intersection geometry checks (RD_03-06) apply - purely from
     the .xodr, no scenario list. A junction counts as a real EuroNCAP intersection
     (turning OR straight crossing) when its incoming roads come from different
     directions; a lane-structure junction that links only parallel roads does not.
@@ -112,7 +112,7 @@ def check_rd_03(root: Any, config: Config) -> CheckResult:
     """Junction curvature radius should be 8 m (kerb/corner radius).
 
     The 8 m spec is the junction CORNER (kerb fillet) radius set in RoadRunner.
-    RoadRunner does NOT export that fillet to OpenDRIVE — the .xodr only contains
+    RoadRunner does NOT export that fillet to OpenDRIVE - the .xodr only contains
     the auto-generated connecting roads, whose <arc> radii are lane-centre path
     values (reference-line geometry), always LARGER than the kerb radius by the
     lateral lane offsets. So from the .xodr alone the kerb radius can only be
@@ -140,7 +140,7 @@ def check_rd_03(root: Any, config: Config) -> CheckResult:
         return _make(
             "CH_RD_03",
             "FAIL",
-            f"Connecting-road radii {too_small} are below the {target} m kerb radius spec — "
+            f"Connecting-road radii {too_small} are below the {target} m kerb radius spec - "
             f"lane-centre paths are always wider than the kerb, so the junction corner is "
             f"tighter than {target} m. Increase the Corner Radius in RoadRunner.",
         )
