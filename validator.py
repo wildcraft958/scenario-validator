@@ -154,7 +154,6 @@ def run_validation(
                     status="FAIL",
                     comment=f"Failed to parse .xodr: {exc}",
                     source_file=xodr_path.name,
-                    severity="High",
                 )
                 for i in range(1, 7)
             ]
@@ -168,7 +167,6 @@ def run_validation(
                 status="FAIL",
                 comment=".xodr file not found",
                 source_file="*.xodr",
-                severity="High",
             )
             for i in range(1, 7)
         ]
@@ -206,7 +204,6 @@ def run_validation(
                     status="FAIL",
                     comment=f"Parsing error: {exc}",
                     source_file=xosc_path.name,
-                    severity="High",
                 )
                 for i in range(1, 23)
             ]
@@ -220,7 +217,6 @@ def run_validation(
                 status="FAIL",
                 comment=".xosc file not found",
                 source_file="*.xosc",
-                severity="High",
             )
             for i in range(1, 23)
         ]
@@ -237,7 +233,6 @@ def run_validation(
                 status="NA",
                 comment="Skipped (--no-rd flag)",
                 source_file="*.rd",
-                severity="Low",
             )
             for i in range(1, 6)
         ]
@@ -255,7 +250,6 @@ def run_validation(
                 status="FAIL",
                 comment=".rd file not found; provide the Model Desk route file or use --no-rd",
                 source_file="*.rd",
-                severity="High",
             )
             for i in range(2 if md_results else 1, 6)
         ]
@@ -269,7 +263,6 @@ def run_validation(
                 status="FAIL",
                 comment="Cannot run .rd consistency checks because .xosc or .xodr parsing failed",
                 source_file=rd_path.name,
-                severity="High",
             )
             for i in range(1, 6)
         ]
@@ -291,7 +284,6 @@ def run_validation(
                     status="FAIL",
                     comment=f"Parsing error: {exc}",
                     source_file=rd_path.name,
-                    severity="High",
                 )
                 for i in range(1, 6)
             ]
@@ -315,7 +307,6 @@ def run_validation(
                     status="FAIL",
                     comment=f"Parsing error: {exc}",
                     source_file=xosc_path.name if xosc_path else "*.xosc",
-                    severity="High",
                 )
                 for i in range(1, 3)
             ]
@@ -329,7 +320,6 @@ def run_validation(
                 status="FAIL",
                 comment=".xosc file not found",
                 source_file="*.xosc",
-                severity="High",
             )
             for i in range(1, 3)
         ]
@@ -348,8 +338,6 @@ def run_validation(
         + fb_results
     )
     for result in all_results:
-        if result.status == "FAIL" and not result.severity:
-            result.severity = "High"
         if result.status == "FAIL" and not result.suggested_fix:
             result.suggested_fix = result.comment or "Correct the failing source data and rerun validation."
 

@@ -46,11 +46,9 @@ _VALIDATION_HEADERS = [
     "Result",
     "Comment",
     "Source file",
-    "Severity",
-    "Automatable or Manual",
     "Timestamp",
 ]
-_ISSUE_HEADERS = ["Check ID", "Category", "Issue", "File", "Suggested fix", "Severity"]
+_ISSUE_HEADERS = ["Check ID", "Category", "Issue", "File", "Suggested fix"]
 
 
 def _header_row(ws, row: int, headers: list[str]) -> None:
@@ -75,7 +73,7 @@ def _result_row(ws, row: int, result: CheckResult) -> None:
 
 
 def _set_column_widths(ws) -> None:
-    widths = {1: 16, 2: 16, 3: 52, 4: 10, 5: 60, 6: 22, 7: 14, 8: 20, 9: 20}
+    widths = {1: 16, 2: 16, 3: 52, 4: 10, 5: 60, 6: 22, 7: 20}
     for col, width in widths.items():
         ws.column_dimensions[get_column_letter(col)].width = width
 
@@ -144,7 +142,7 @@ def write_excel(
     # Set header rows to fixed heights; auto-size data rows
     ws.row_dimensions[1].height = 20
     ws.row_dimensions[3].height = 28
-    _VALIDATION_COL_CHARS = {1: 16, 2: 16, 3: 52, 4: 10, 5: 60, 6: 22, 7: 14, 8: 20, 9: 20}
+    _VALIDATION_COL_CHARS = {1: 16, 2: 16, 3: 52, 4: 10, 5: 60, 6: 22, 7: 20}
     _auto_row_heights(ws, data_start_row=4, col_char_widths=_VALIDATION_COL_CHARS)
 
     # ---- Sheet 2: Issues log ----
@@ -160,14 +158,13 @@ def write_excel(
                 result.comment,
                 result.source_file,
                 result.suggested_fix,
-                result.severity,
             ]
             for col_idx, value in enumerate(values, start=1):
                 cell = ws_issues.cell(row=row, column=col_idx, value=value)
                 cell.alignment = Alignment(wrap_text=True)
             row += 1
 
-    _ISSUES_COL_WIDTHS = {1: 16, 2: 16, 3: 64, 4: 22, 5: 64, 6: 12}
+    _ISSUES_COL_WIDTHS = {1: 16, 2: 16, 3: 64, 4: 22, 5: 64}
     for col, width in _ISSUES_COL_WIDTHS.items():
         ws_issues.column_dimensions[get_column_letter(col)].width = width
     ws_issues.row_dimensions[1].height = 28

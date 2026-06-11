@@ -1355,15 +1355,13 @@ class TestFullPipeline:
         import openpyxl
         wb = openpyxl.load_workbook(out)
         assert wb.sheetnames[:3] == ["Validation", "Issues Log", "Run Summary"]
-        assert [wb["Validation"].cell(row=3, column=i).value for i in range(1, 10)] == [
+        assert [wb["Validation"].cell(row=3, column=i).value for i in range(1, 8)] == [
             "Check ID",
             "Category",
             "Check name",
             "Result",
             "Comment",
             "Source file",
-            "Severity",
-            "Automatable or Manual",
             "Timestamp",
         ]
 

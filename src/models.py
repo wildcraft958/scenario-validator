@@ -112,7 +112,6 @@ class CheckResult(BaseModel):
     status: CheckStatus
     comment: str = ""
     source_file: str = ""
-    severity: str = "Medium"
     automatable_or_manual: Literal["Automatable", "Manual"] = "Automatable"
     timestamp: str = Field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     suggested_fix: str = ""
@@ -121,10 +120,6 @@ class CheckResult(BaseModel):
     def normalize_review_fields(self) -> CheckResult:
         if self.status == "MANUAL_REVIEW":
             self.automatable_or_manual = "Manual"
-            if not self.severity:
-                self.severity = "Low"
-        elif not self.severity:
-            self.severity = "High" if self.status == "FAIL" else "Medium"
         if self.status == "FAIL" and not self.suggested_fix:
             self.suggested_fix = self.comment or "Review the failing check and correct the source data."
         return self
@@ -143,8 +138,6 @@ class CheckResult(BaseModel):
             self.result,
             self.comment,
             self.source_file,
-            self.severity,
-            self.automatable_or_manual,
             self.timestamp,
         ]
 

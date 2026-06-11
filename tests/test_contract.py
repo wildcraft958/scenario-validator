@@ -189,15 +189,13 @@ def test_cli_success_and_report_contract(tmp_path: Path) -> None:
 
     wb = openpyxl.load_workbook(latest_xlsx(out))
     assert wb.sheetnames[:3] == ["Validation", "Issues Log", "Run Summary"]
-    assert [wb["Validation"].cell(row=3, column=i).value for i in range(1, 10)] == [
+    assert [wb["Validation"].cell(row=3, column=i).value for i in range(1, 8)] == [
         "Check ID",
         "Category",
         "Check name",
         "Result",
         "Comment",
         "Source file",
-        "Severity",
-        "Automatable or Manual",
         "Timestamp",
     ]
     rows = validation_rows(latest_xlsx(out))
