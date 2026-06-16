@@ -1089,6 +1089,7 @@ def _impact_verdict(
     # §1.2.5.2 - so we can neither confirm nor reject it); FAIL only when the estimate is
     # confidently off (far from the design AND the geometry is stable).
     miss = abs(computed - expected)
+    narrow_vru_turn = actor in ("EPTa", "EPTc", "EBTa", "EMT") and motion in ("turning", "crossing")
     if miss <= tolerance:
         return _make(
             check_id, "PASS",
@@ -1103,6 +1104,18 @@ def _impact_verdict(
             f"(the impact % swings ±{sensitivity:.0f}% across the ±0.1 s sync window, "
             f"rotating/fast geometry), so design-time kinematics can neither confirm nor "
             f"reject it; verify the impact location in RoadRunner.{vru_note} {basis}",
+        )
+    if narrow_vru_turn:
+        # A narrow VRU's turning/crossing impact location cannot be pinned by design-time
+        # kinematics (§1.2.5.2 corner-first rotation + thin footprint) and the protocol
+        # finalises it in HIL ("approximately close, final tuning in HILs"). So even when the
+        # estimate is far from the design we do NOT hard-FAIL - we flag for HIL confirmation.
+        # Wide targets (GVT/SOV) and longitudinal impacts still FAIL when confidently off.
+        return _make(
+            check_id, "MANUAL_REVIEW",
+            f"Impact estimate {computed:.1f}% vs protocol {expected:.0f}% ±{tolerance:.0f}% "
+            f"({detail}).{vru_note} A design-time geometric estimate cannot pin this; confirm "
+            f"the impact location in HIL. {basis}",
         )
     return _make(
         check_id, "FAIL",
