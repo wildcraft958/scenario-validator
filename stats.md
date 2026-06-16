@@ -87,8 +87,40 @@ CH_SC_14/15/17/19 (not applicable to these turning scenarios), CH_MR_02 (no brak
 scenarios here), CH_RD_03 (kerb radius not exported by RoadRunner, GUI confirm),
 CH_SC_16/20 (geometric estimates confirmed in HIL).
 
+## Parity vs hand-validated reviews
+
+38 of the 54 scenarios ship a human-completed reviewer checklist (`<base>_Review.xlsx`).
+Taking those as ground truth, `tools/crosscheck_reviews.py` compares our verdict against
+the reviewer's per check, over the 39 directly comparable checks (our NM_04-06 and the
+reviewer-only MD_06-11 / FB_02 have no counterpart).
+
+| Measure | Result |
+|---|---|
+| Comparable decisions | 1338 |
+| Agreement | 94.4% |
+| **False PASS (reviewer No, ours Yes)** | **0** |
+| Our Manual defers (we measured, asked for confirm) | 128 |
+
+The reviewer marked **no failures anywhere** - every checkpoint they assessed is Yes or
+N/A. So our validator never contradicts a human failure, and it adds independent
+failure-detection on top of the manual pass. The 75 disagreements split into two kinds:
+
+- **70 are `NA -> Yes`**: we deterministically pass conditional checks the reviewer left
+  N/A (CH_SC_22 x38, CH_RD_02 x16, CH_RD_04 x16). Our pass is correct but less precise
+  than N/A; emitting N/A when the precondition is absent (no obstructions for SC_22, no
+  intersection static objects for RD_04) would give exact parity.
+- **5 are `Yes -> No`** on geometric (partially-automated) checks:
+  - **1 reviewer miss our validator caught (high confidence):** `CBTAfo_15VUT_15EBTa_10Imp`
+    has a 3.8 m VUT turn radius vs the protocol's 11.75 m, while its sibling scenarios at
+    the same speed/side measure 12.0 m. Impact % cannot change the turn radius, so this
+    file was authored with a wrong (tight) turn that the reviewer passed (CH_SC_07).
+  - **4 are our scope for improvement:** our CH_SC_16 impact-% estimate runs systematically
+    low for bicycle (EBTa) turning (29.9/43.8/50.1/31.8% vs 50/75/90/50%). The reviewer
+    reasonably passed these under "approximately close, final tuning in HIL".
+
 ## Reproduce
 
 ```bash
 python tools/run_eval.py Eval_Data --output /tmp/eval --report /tmp/eval/report.md --label After
+python tools/crosscheck_reviews.py Eval_Data --report /tmp/eval/parity.md
 ```
