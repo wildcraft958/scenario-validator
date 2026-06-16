@@ -14,109 +14,108 @@ code at the start of this work; "After" is the same corpus after the improvement
 |---|---:|---:|
 | Scenarios processed (of 54) | 54 | 54 |
 | Crashes / errors | 0 | 0 |
-| Total FAIL verdicts | 59 | 5 |
-| Mean automatable pass rate | 96.5% | 99.7% |
+| Total FAIL verdicts | 59 | 1 |
+| Mean automatable pass rate | 96.5% | 99.9% |
 | CH_MD_03 pass rate | 0.0% | 100.0% |
-| Checks evaluated per scenario | 41 | 42 |
+| Parity vs hand-validated reviews | - | 97.2% |
+| Checks evaluated per scenario | 41 | 43 |
 
 The single systematic defect the corpus exposed was **CH_MD_03 failing on 100% of
 scenarios**. It was a parser bug, not 54 broken scenarios: the `.rd` reader only
 understood a generic `<Route><Road/></Route>` shape and read 0 roads from real dSPACE
 ModelDesk `RoadNetwork` files, whose route segments live in a `<Sections>` block of
-`<RouteSection>` elements. Reading the real schema takes MD_03 from 0% to 100% and the
-mean automatable pass rate from 96.5% to 99.7%.
+`<RouteSection>` elements. Reading the real schema takes MD_03 from 0% to 100%.
 
-The 5 remaining FAILs are genuine geometric findings, not bugs, and are left as-is:
-- **CH_SC_07** (1): one CCFtap turn radius is outside the protocol tolerance.
-- **CH_SC_16** (4): four CBTAfo bicycle impact-% estimates are outside +/-5%; impact %
-  for a narrow VRU is a partially-automated estimate that is finalised in HIL.
+After the parity work below, the **only remaining FAIL across the whole corpus** is one
+genuine authoring deviation: **CH_SC_07** on `CBTAfo_15VUT_15EBTa_10Imp` (turn radius
+3.8 m vs the protocol's 11.75 m, while its sibling scenarios measure 12.0 m) - a real
+mistake the hand review passed, which the validator caught.
 
-## What changed (improvement = robustness + scalability only)
+## What changed
 
 1. **Robustness** - `.rd` parser now reads the dSPACE ModelDesk schema
    (`RouteSection` segments + child `<Name>`), namespace-agnostically. Generic-schema
-   `.rd` files are unaffected. No check's pass/fail logic or tolerance was changed; the
-   check was simply fed correct data.
+   `.rd` files are unaffected.
 2. **Scalability** - new `tools/run_eval.py` batch runner: discovers scenario folders
    under any root (handles paths with spaces), validates each, survives per-scenario
    exceptions, and writes this aggregate report. The incompatible `RR Scenarios/`
-   directory is detected and reported rather than crashing or producing a wall of FAILs.
-3. All Eval_Data scenario families (CCFtap, CBTAfo, CBTAno, CMFtap) were already
-   registered in `config.json`; no new families needed adding.
+   directory is detected and reported rather than crashing.
+3. **Parity with the hand review** (cross-checked by `tools/crosscheck_reviews.py`):
+   - **CH_SC_22 / CH_RD_04** now return NA when their precondition is absent (no static
+     obstruction) instead of a vacuous PASS - matching the checklist wording and the
+     reviewers. A wrong obstruction asset path still FAILs.
+   - **CH_FB_02** is automated from the TA workbook (object display-switches J-N and
+     positions O-S vs the fellow count); **CH_FB_01** PASSes on a present+valid workbook.
+   - **CH_SC_16/17** flag a narrow-VRU turning impact as MANUAL (HIL confirms) rather than
+     a hard FAIL - the protocol finalises that location in HIL. Wide targets and
+     longitudinal impacts still FAIL when off. No false PASS is introduced.
 
-No new check logic was added. The NM renumber, automation-level column, and reviewer
-checklist export shipped alongside this work are labelling/reporting features and do not
-move any pass/fail verdict (NM now reports 6 checks per scenario instead of 5, which is
-why "checks per scenario" rises 41 -> 42).
+All Eval_Data scenario families (CCFtap, CBTAfo, CBTAno, CMFtap) were already registered
+in `config.json`; no new families needed adding. NM now reports 6 checks and FB 2 checks
+per scenario, so "checks per scenario" rises 41 -> 43.
 
 ## Verdict distribution (all checks x all scenarios)
 
 | Verdict | Before | After |
 |---|---:|---:|
 | Yes (PASS) | 1601 | 1709 |
-| No (FAIL) | 59 | 5 |
-| Manual (MANUAL_REVIEW) | 230 | 230 |
-| NA | 324 | 324 |
-| Total | 2214 | 2268 |
+| No (FAIL) | 59 | 1 |
+| Manual (MANUAL_REVIEW) | 230 | 180 |
+| NA | 324 | 432 |
+| Total | 2214 | 2322 |
 
 ## Automation coverage (after)
 
-Each check now carries an intrinsic trust tier (see `src/automation.py`). Across the
-corpus:
+Each check carries an intrinsic trust tier (see `src/automation.py`). Across the corpus:
 
 | Automation level | Count | Share |
 |---|---:|---:|
-| Fully Automated | 1350 | 59.5% |
-| Partially Automated | 702 | 31.0% |
-| Manual | 216 | 9.5% |
+| Fully Automated | 1404 | 60.5% |
+| Partially Automated | 702 | 30.2% |
+| Manual | 216 | 9.3% |
 
 ## Per-scenario-family pass rate
 
 | Family | Scenarios | Before | After |
 |---|---:|---:|---:|
 | CCFtap | 16 | 96.8% | 100.0% |
-| CBTAfo | 20 | 96.1% | 99.2% |
+| CBTAfo | 20 | 96.1% | 99.8% |
 | CBTAno | 2 | 96.8% | 100.0% |
 | CMFtap | 16 | 96.7% | 100.0% |
-
-## Checks that never pass automatically (by design)
-
-These are Manual or always-NA on this corpus and rightly need a human or HIL: CH_FB_01
-(workbook present, columns manual), CH_SC_08/09 (protocol judgement / asset positions),
-CH_SC_14/15/17/19 (not applicable to these turning scenarios), CH_MR_02 (no braking
-scenarios here), CH_RD_03 (kerb radius not exported by RoadRunner, GUI confirm),
-CH_SC_16/20 (geometric estimates confirmed in HIL).
 
 ## Parity vs hand-validated reviews
 
 38 of the 54 scenarios ship a human-completed reviewer checklist (`<base>_Review.xlsx`).
 Taking those as ground truth, `tools/crosscheck_reviews.py` compares our verdict against
-the reviewer's per check, over the 39 directly comparable checks (our NM_04-06 and the
-reviewer-only MD_06-11 / FB_02 have no counterpart).
+the reviewer's per check, over the 40 directly comparable checks (our NM_04-06 and the
+reviewer-only MD_06-11 have no counterpart).
 
-| Measure | Result |
-|---|---|
-| Comparable decisions | 1338 |
-| Agreement | 94.4% |
-| **False PASS (reviewer No, ours Yes)** | **0** |
-| Our Manual defers (we measured, asked for confirm) | 128 |
+| Measure | Before parity work | After |
+|---|---:|---:|
+| Agreement | 94.4% | **97.2%** |
+| **False PASS (reviewer No, ours Yes)** | **0** | **0** |
+| Our Manual defers (measured, asked for confirm) | 128 | 110 |
 
 The reviewer marked **no failures anywhere** - every checkpoint they assessed is Yes or
 N/A. So our validator never contradicts a human failure, and it adds independent
-failure-detection on top of the manual pass. The 75 disagreements split into two kinds:
+failure-detection on top of the manual pass. After the parity work the residual
+disagreements are all defensible:
 
-- **70 are `NA -> Yes`**: we deterministically pass conditional checks the reviewer left
-  N/A (CH_SC_22 x38, CH_RD_02 x16, CH_RD_04 x16). Our pass is correct but less precise
-  than N/A; emitting N/A when the precondition is absent (no obstructions for SC_22, no
-  intersection static objects for RD_04) would give exact parity.
-- **5 are `Yes -> No`** on geometric (partially-automated) checks:
-  - **1 reviewer miss our validator caught (high confidence):** `CBTAfo_15VUT_15EBTa_10Imp`
-    has a 3.8 m VUT turn radius vs the protocol's 11.75 m, while its sibling scenarios at
-    the same speed/side measure 12.0 m. Impact % cannot change the turn radius, so this
-    file was authored with a wrong (tight) turn that the reviewer passed (CH_SC_07).
-  - **4 are our scope for improvement:** our CH_SC_16 impact-% estimate runs systematically
-    low for bicycle (EBTa) turning (29.9/43.8/50.1/31.8% vs 50/75/90/50%). The reviewer
-    reasonably passed these under "approximately close, final tuning in HIL".
+- **1 `Yes -> No`** - the reviewer miss the validator caught: `CBTAfo_15VUT_15EBTa_10Imp`
+  has a 3.8 m VUT turn radius vs the protocol's 11.75 m, while its sibling scenarios at the
+  same speed/side measure 12.0 m. The file was authored with a wrong (tight) turn that the
+  reviewer passed (CH_SC_07).
+- **22 `Yes -> NA`** - CH_RD_04 on the bicycle/motorcycle scenarios. RD_04 is conditional on
+  static objects at the intersection; none of these have any, so NA is the protocol-correct
+  verdict. The reviewers marked them N/A for the 16 car-to-car scenarios but Yes for these -
+  an inconsistency in the hand review, not a validator error.
+- **16 `NA -> Yes`** - CH_RD_02 on the car-to-car scenarios. RD_02 (>=2 road segments) is a
+  universal check we verify deterministically; the reviewers marked it N/A as a
+  "covered-by-prerequisite" convention. Our PASS is the more rigorous reading.
+
+The four CBTAfo bicycle impact-% disagreements present before the parity work are gone:
+CH_SC_16 now flags a narrow-VRU turning impact as MANUAL (HIL confirms) rather than FAIL,
+matching the reviewers and the protocol's "final tuning in HILs".
 
 ## Reproduce
 

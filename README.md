@@ -214,6 +214,7 @@ scenario_validator/
 ├── config.xlsx               # Same thresholds as a 6-sheet Excel workbook
 ├── tools/make_config_xlsx.py # Regenerate config.xlsx from config.json (round-trip checked)
 ├── tools/run_eval.py         # Batch-validate a corpus and aggregate a markdown report
+├── tools/crosscheck_reviews.py # Compare verdicts against hand-filled _Review.xlsx (parity)
 ├── setup.sh / setup.bat      # Dependency installers
 ├── requirements.txt          # Loose version constraints
 ├── requirements-lock.txt     # Pinned versions for reproducible installs
@@ -233,8 +234,8 @@ scenario_validator/
 │       ├── scenario.py       # Scenario behaviour checks (CH_SC_01..22)
 │       ├── model_desk.py     # Model Desk route checks (CH_MD_01..05)
 │       ├── model_review.py   # Speed sanity + braking decel (CH_MR_01..02)
-│       └── functional_block.py # Functional / Test-Automation workbook (CH_FB_01)
-└── tests/                    # 185 tests (unit + mutation robustness + protocol)
+│       └── functional_block.py # Functional / Test-Automation workbook (CH_FB_01..02)
+└── tests/                    # 193 tests (unit + mutation robustness + protocol)
 ```
 
 ---
@@ -242,7 +243,7 @@ scenario_validator/
 ## Running tests
 
 ```bash
-python -m pytest tests/ -q      # 185 tests
+python -m pytest tests/ -q      # 193 tests
 ```
 
 The suite mixes unit tests, mutation-based robustness tests on the real RoadRunner example exports (`examples/`), and protocol-grounded impact tests. Static typing is clean under `pyright src/ validator.py tools/`.
