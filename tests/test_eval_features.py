@@ -164,6 +164,37 @@ class TestSC22ObstructionScope:
         assert check_sc_22(self._root(body), config).status == "FAIL"
 
 
+class TestObstructionDetectionGeneralizes:
+    """A recognised target (a stationary GVT in CCRs, an SOV) is never an obstruction; a
+    generic static object still is - so SC_22/RD_04 applicability generalises beyond the
+    turn-across samples that ship in Eval_Data."""
+
+    def _root(self, xml: str):
+        import io
+        from lxml import etree
+        return etree.parse(io.BytesIO(xml.encode()), etree.XMLParser(no_network=True)).getroot()
+
+    def test_stationary_target_not_obstruction_generic_object_is(self, config):
+        from src.checks.scenario import _obstruction_entity_names
+        xml = (
+            '<OpenSCENARIO><Entities>'
+            '<ScenarioObject name="Ego"><Vehicle name="Ego"/></ScenarioObject>'
+            '<ScenarioObject name="GVT"><Vehicle name="GVT"/></ScenarioObject>'
+            '<ScenarioObject name="Barrier1"><Vehicle name="Barrier1"/></ScenarioObject>'
+            '</Entities><Init><Actions>'
+            '<Private entityRef="GVT"><PrivateAction><LongitudinalAction><SpeedAction>'
+            '<SpeedActionTarget><AbsoluteTargetSpeed value="0"/></SpeedActionTarget>'
+            '</SpeedAction></LongitudinalAction></PrivateAction></Private>'
+            '<Private entityRef="Barrier1"><PrivateAction><LongitudinalAction><SpeedAction>'
+            '<SpeedActionTarget><AbsoluteTargetSpeed value="0"/></SpeedActionTarget>'
+            '</SpeedAction></LongitudinalAction></PrivateAction></Private>'
+            '</Actions></Init></OpenSCENARIO>'
+        )
+        obs = _obstruction_entity_names(self._root(xml), config)
+        assert "GVT" not in obs, f"stationary GVT target must not be an obstruction: {obs}"
+        assert "Barrier1" in obs, f"a generic static object IS an obstruction: {obs}"
+
+
 class TestRD04ObstructionPrecondition:
     """CH_RD_04's (0,0,0) origin rule only applies to scenarios with static objects at the
     intersection, applied at the run level where the .xosc entities are known."""

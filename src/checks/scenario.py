@@ -1542,27 +1542,33 @@ def check_sc_21(xosc_root: Any, config: Config) -> CheckResult:
 def _obstruction_entity_names(xosc_root: Any, config: Config) -> list[str]:
     """Static obstruction entities in the scene. A non-VUT entity counts as an obstruction
     when its name matches a configured obstruction pattern (Obstruction/StaticVehicle/...),
-    OR it starts at speed 0 with no trajectory AND is not a stationary VRU target
-    (EMT/EPTa/EPTc/EBTa). The VRU exclusion keeps a designed-stationary pedestrian/cyclist
-    target from being mistaken for an obstruction; the speed-0/no-trajectory branch still
-    catches obstruction vehicles whose name is not in the pattern list (e.g.
-    LargeObstructionVehicle). Moving targets (with a trajectory) are never obstructions."""
+    OR it starts at speed 0 with no trajectory AND is not a recognised EuroNCAP target.
+
+    The target exclusion is deliberately broad - every configured target token (GVT, EPTa,
+    EPTc, EBTa, EMT, SOV) plus registered SOV names - so a designed-stationary PRIMARY target
+    in any scenario family (a stationary GVT in CCRs, a stationary VRU, a real-vehicle SOV) is
+    never mistaken for an obstruction. The speed-0/no-trajectory branch still catches genuine
+    obstruction vehicles whose name is not in the pattern list (e.g. LargeObstructionVehicle).
+    Static GVT variants (GVTs/GVTb/GVT_S) are obstructions via the name pattern, which wins.
+    Moving targets (with a trajectory) are never obstructions."""
     entities = [xosc.get_entity_name(e) for e in xosc.get_entities(xosc_root)]
     vut = _identify_vut(xosc_root, config)
     static_patterns = [p.upper() for p in config.static_target_name_patterns]
-    vru_patterns = [p.upper() for p in config.stationary_target_name_patterns]
+    target_tokens = [t.upper() for t in config.target_type_tokens]
+    sov_names = [s.upper() for s in getattr(config, "sov_entity_names", [])]
+    known_targets = target_tokens + sov_names
     out: list[str] = []
     for e in entities:
         if e == vut:
             continue
         upper = e.upper()
         name_is_obstruction = any(upper.startswith(p) for p in static_patterns)
-        name_is_vru = any(upper.startswith(p) for p in vru_patterns)
+        name_is_known_target = any(upper.startswith(t) for t in known_targets)
         explicit_static = (
             xosc.get_init_speed(xosc_root, e) == 0.0
             and not xosc.has_init_follow_trajectory(xosc_root, e)
         )
-        if name_is_obstruction or (explicit_static and not name_is_vru):
+        if name_is_obstruction or (explicit_static and not name_is_known_target):
             out.append(e)
     return out
 
