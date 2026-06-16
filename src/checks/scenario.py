@@ -699,8 +699,12 @@ def _obstruction_layout_note(
     lateral = {o: abs(-(p["x"] - vx) * sin_h + (p["y"] - vy) * cos_h) for o, p in pts}
     ordered = sorted(along, key=lambda o: along[o])
 
-    veh_len = config.vehicle_dimensions.get("GVT", config.vehicle_dimensions["default_car"]).length
-    veh_half_w = config.vehicle_dimensions.get("GVT", config.vehicle_dimensions["default_car"]).width / 2.0
+    # Use the obstructions' OWN bounding boxes (from the .xosc, config fallback), not a fixed
+    # GVT length, so the expected bumper spacing/edge offset is correct for any obstruction
+    # model (LargeObstructionVehicle, SmallObstructionVehicle, ...), not just the corpus's.
+    obs_dims = [_entity_bbox(xosc_root, config, o) for o in ordered]
+    veh_len = sum(d[2] for d in obs_dims) / len(obs_dims)
+    veh_half_w = (sum(d[3] for d in obs_dims) / len(obs_dims)) / 2.0
     expected_spacing = veh_len + config.obstruction_gap_m
     tol = config.obstruction_layout_tolerance_m
 
