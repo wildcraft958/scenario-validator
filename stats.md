@@ -92,9 +92,15 @@ reviewer-only MD_06-11 have no counterpart).
 
 | Measure | Before parity work | After |
 |---|---:|---:|
-| Agreement | 94.4% | **97.2%** |
+| Agreement (all comparable checks) | 94.4% | **97.2%** |
+| **Core metric** (NM + RD + SC, <= SC_22) | - | **96.3%** |
+| Extension (MD + MR + FB) | - | **100.0%** |
 | **False PASS (reviewer No, ours Yes)** | **0** | **0** |
 | Our Manual defers (measured, asked for confirm) | 128 | 110 |
+
+The **core checklist metric (NM + RD + SC, up to SC_22)** is the headline figure; MD / MR /
+FB are reported as an extension. All of the residual disagreements sit in the core (RD/SC);
+the extension checks agree 100%.
 
 The reviewer marked **no failures anywhere** - every checkpoint they assessed is Yes or
 N/A. So our validator never contradicts a human failure, and it adds independent
@@ -112,6 +118,29 @@ disagreements are all defensible:
 - **16 `NA -> Yes`** - CH_RD_02 on the car-to-car scenarios. RD_02 (>=2 road segments) is a
   universal check we verify deterministically; the reviewers marked it N/A as a
   "covered-by-prerequisite" convention. Our PASS is the more rigorous reading.
+
+## Generalization (beyond the corpus families)
+
+The corpus is all turn-across-path (1 moving target, no obstructions). A brittleness audit
+checked that the logic holds for families NOT in the corpus, verified against the committed
+`examples/` (CCFhol SOV, CCFhos head-on, CPNCO obstructions, CPTA pedestrian-turn):
+
+- **Hardened so they generalize:** obstruction detection (`_obstruction_entity_names`)
+  excludes every recognized target token + SOV names, so a stationary GVT (CCRs) or an SOV
+  is never mistaken for an obstruction; SC_16/17 now pick the impact target by its filename
+  token (not document order), so a multi-fellow scene (SOV, obstructions) measures the right
+  pair; SC_14 obstruction layout uses each obstruction's own bounding box, not a fixed GVT
+  length. FB_02 reads the TA workbook by header/step name with a try/except (degrades to
+  MANUAL, never crashes) and uses the dynamic fellow count.
+- **Verified already general:** junction gating (RD_03-06, SC_10) is `.xodr`-geometry-driven
+  and NAs correctly off non-junction families; MR_02 deceleration applicability is derived
+  from the action; the `.rd` parser is namespace-agnostic with a text fallback.
+- **Documented coverage gaps (not silent errors):** side-impact families (CBTAfs/CBTAns/
+  CMCscp) read impact on the length axis but ship no example to validate locally; a CCRs
+  stationary lead encoded as a degenerate trajectory (rather than init-speed 0) would not be
+  zero-speed-checked by SC_14/15. Add an example of each before running those families in
+  anger. The `scenarios.*.type` key is the impact-tolerance routing key (SC_16 +/-5% vs
+  SC_17 +/-1%), deliberately separate from the motion taxonomy used for the reference point.
 
 The four CBTAfo bicycle impact-% disagreements present before the parity work are gone:
 CH_SC_16 now flags a narrow-VRU turning impact as MANUAL (HIL confirms) rather than FAIL,
