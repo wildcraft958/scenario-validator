@@ -92,11 +92,32 @@ Each check produces one of four results:
 | `Manual` | Yellow | The tool measured the data but a human (or HIL) must confirm |
 
 The Excel file has three sheets:
-- **Validation** - one row per check with result and comment
+- **Validation** - one row per check with result, comment, and an **Automation Level**
+  (Fully Automated / Partially Automated / Manual) plus a one-line reason, so you can see
+  how far each verdict can be trusted on its own
 - **Issues Log** - every failure pre-populated for quick triage
-- **Run Summary** - total counts, automatable pass rate, timestamp, CLI command
+- **Run Summary** - total counts, automatable pass rate, automation coverage, timestamp, CLI command
 
 The **automatable pass rate** counts only PASS/FAIL checks (it excludes NA and Manual), so it reflects the checks the tool can actually decide.
+
+### Reviewer checklist export (`--checklist`)
+
+Pass `--checklist` to also write `Review_Checklist_<scenario>_<timestamp>.xlsx`, a workbook
+that matches the team's review format (Summary / ChecklistFinal / Prequisites). Our verdict
+fills the Self Review column, Review1/Review2 stay blank for human reviewers, and the
+Automation Level travels along. Checkpoints the validator does not automate (MD_06-11,
+FB_02) appear as Manual rows with the reviewer wording. Tune the ChecklistFinal column
+widths in `config.json` (`checklist_column_widths`) without touching code.
+
+### Batch a whole corpus
+
+`tools/run_eval.py` validates every scenario folder under a root and writes an aggregate
+markdown report (per-check pass rates, per-family summary, automation coverage). It never
+aborts on a single bad scenario and flags directories that are not full exports:
+
+```
+python tools/run_eval.py Eval_Data --output ./eval_reports --report ./eval_reports/report.md
+```
 
 ---
 
@@ -114,6 +135,7 @@ options:
   --output DIR          Where to write reports (default: inside scenario_dir)
   --no-rd               Skip the Model Desk checks (use when the .rd file is absent)
   --quiet               Suppress console output (still writes the log file)
+  --checklist           Also write a reviewer-format Review_Checklist_*.xlsx workbook
   --check-config        Validate the config file, print the effective settings, and exit
 ```
 
@@ -191,17 +213,20 @@ scenario_validator/
 ├── config.json               # EuroNCAP thresholds (edit here, not in code)
 ├── config.xlsx               # Same thresholds as a 6-sheet Excel workbook
 ├── tools/make_config_xlsx.py # Regenerate config.xlsx from config.json (round-trip checked)
+├── tools/run_eval.py         # Batch-validate a corpus and aggregate a markdown report
 ├── setup.sh / setup.bat      # Dependency installers
 ├── requirements.txt          # Loose version constraints
 ├── requirements-lock.txt     # Pinned versions for reproducible installs
 ├── src/
 │   ├── models.py             # Data models: CheckResult, SummaryStats, Config
+│   ├── automation.py         # Per-check automation trust tier + reason
+│   ├── checklist_template.py # Static content for the --checklist reviewer export
 │   ├── geometry.py           # §1.2.5 impact-location estimator (per-actor reference point)
-│   ├── reporter.py           # Excel output
+│   ├── reporter.py           # Excel output (native report + reviewer checklist)
 │   ├── parsers/
 │   │   ├── xosc.py           # OpenSCENARIO parser (secure lxml)
 │   │   ├── xodr.py           # OpenDRIVE parser (secure lxml)
-│   │   └── rd.py             # Model Desk route-file parser
+│   │   └── rd.py             # Model Desk route-file parser (generic + dSPACE schema)
 │   └── checks/
 │       ├── naming.py         # Naming convention checks (CH_NM_01..06)
 │       ├── road.py           # Road layout checks (CH_RD_01..06)
@@ -209,7 +234,7 @@ scenario_validator/
 │       ├── model_desk.py     # Model Desk route checks (CH_MD_01..05)
 │       ├── model_review.py   # Speed sanity + braking decel (CH_MR_01..02)
 │       └── functional_block.py # Functional / Test-Automation workbook (CH_FB_01)
-└── tests/                    # 174 tests (unit + mutation robustness + protocol)
+└── tests/                    # 185 tests (unit + mutation robustness + protocol)
 ```
 
 ---
@@ -217,7 +242,7 @@ scenario_validator/
 ## Running tests
 
 ```bash
-python -m pytest tests/ -q      # 174 tests
+python -m pytest tests/ -q      # 185 tests
 ```
 
 The suite mixes unit tests, mutation-based robustness tests on the real RoadRunner example exports (`examples/`), and protocol-grounded impact tests. Static typing is clean under `pyright src/ validator.py tools/`.

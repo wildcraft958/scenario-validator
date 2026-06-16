@@ -8,7 +8,7 @@ Each grounds a check fix against the EuroNCAP protocol + the RoadRunner export r
           raw road count is >= 2 (the old check only counted roads).
   NM_01 - actor-name matching is word-boundary, so 'VehicleX'/'VehicleTest' FAIL while
           'Vehicle2' still PASSes (the old loose startswith let any 'Vehicle*' through).
-  NM_02 - the filename target-token -> OSC category cross-check accepts that EBTa/EMT
+  NM_04 - the filename target-token -> OSC category cross-check accepts that EBTa/EMT
           export as <Vehicle> in RoadRunner, so a cyclist target does not false-flag,
           while a genuine pedestrian-vs-GVT mismatch still flags.
 """

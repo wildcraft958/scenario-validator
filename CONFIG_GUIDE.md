@@ -53,6 +53,7 @@ These describe *your* workflow and naming conventions.
 | `optional_standalone_files` | `VehicleCatalog.xosc` | Reported if present, never required |
 | `junction_scenario_prefixes` | `CP, CB, …` | Scenario families that get the junction geometry checks |
 | `extra_scenario_prefixes` | `CPLA, CMRs, …` | Valid name prefixes that have no row in the Scenarios sheet yet |
+| `checklist_column_widths` | `{"4": 72, …}` | Column widths (characters) for the `--checklist` reviewer-export ChecklistFinal sheet, keyed by 1-based column number. The team hand-creates that file, so tune its layout here, not in code. Any omitted column uses the built-in default. JSON-only (not surfaced in `config.xlsx`). |
 
 In Excel, list values are one cell, comma-separated: `VUT, Ego, EgoVehicle, Vehicle`.
 
