@@ -80,25 +80,25 @@ def check_md_02(rd_data: dict, xosc_root: Any, config: Config) -> CheckResult:
 
 
 def check_md_03(rd_data: dict) -> CheckResult:
-    """All routes must have at least 2 roads."""
-    roads_per_route = rd.get_roads_per_route(rd_data)
-    if not roads_per_route:
+    """All routes must span at least 2 roads (road segments)."""
+    segment_counts = rd.get_route_segment_counts(rd_data)
+    if not segment_counts:
         return _make(
             "CH_MD_03",
             "MANUAL_REVIEW",
-            "Could not parse route road lists from .rd file - verify manually",
+            "Could not parse route road segments from .rd file - verify manually",
         )
 
     short_routes = [
-        f"Route {i+1} ({len(r)} road{'s' if len(r) != 1 else ''})"
-        for i, r in enumerate(roads_per_route)
-        if len(r) < 2
+        f"Route {i+1} ({n} road{'s' if n != 1 else ''})"
+        for i, n in enumerate(segment_counts)
+        if n < 2
     ]
     if not short_routes:
         return _make(
             "CH_MD_03",
             "PASS",
-            f"All {len(roads_per_route)} routes have >= 2 roads",
+            f"All {len(segment_counts)} routes span >= 2 road segments",
         )
     return _make(
         "CH_MD_03",

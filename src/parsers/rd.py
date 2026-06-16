@@ -15,25 +15,35 @@ log = logging.getLogger(__name__)
 
 
 def _try_xml(data: bytes) -> dict[str, Any] | None:
+    """Parse a .rd as XML, namespace-agnostically (local-name matching).
+
+    Two route schemas occur in the wild and both are read here:
+      * generic:  <Route><Road id="1"/><Road id="2"/></Route>            -> roads = ids
+      * dSPACE ModelDesk RoadNetwork: each <Route> has a child <Name> and a
+        <Sections> block of <RouteSection> elements (its road segments).  -> section_count
+
+    Road COUNT for "route has >= 2 roads" (CH_MD_03) comes from get_route_segment_counts,
+    which uses the explicit <Road> ids when present and otherwise the RouteSection count.
+    """
     try:
         from lxml import etree as _etree  # type: ignore[import-untyped]
         import io
         _parser = _etree.XMLParser(no_network=True, resolve_entities=False, load_dtd=False)
         root = _etree.parse(io.BytesIO(data), _parser).getroot()
         routes = []
-        for route_el in root.xpath("//Route") or root.xpath("//route") or root.xpath("//*[local-name()='Route']"):
-            roads_in_route = (
-                route_el.xpath(".//Road/@id")
-                or route_el.xpath(".//road/@id")
-                or route_el.xpath(".//*[local-name()='Road']/@id")
+        for route_el in root.xpath("//*[local-name()='Route']"):
+            name_nodes = route_el.xpath("./*[local-name()='Name']/text()")
+            route_name = str(name_nodes[0]).strip() if name_nodes else route_el.get(
+                "name", route_el.get("id", "")
             )
-            route_name = route_el.get("name", route_el.get("id", ""))
-            roads_in_route = [str(r) for r in roads_in_route]
-            warnings = route_el.xpath(".//Warning") or route_el.xpath(".//warning")
-            errors_el = route_el.xpath(".//Error") or route_el.xpath(".//error")
+            road_ids = [str(r) for r in route_el.xpath(".//*[local-name()='Road']/@id")]
+            section_count = len(route_el.xpath(".//*[local-name()='RouteSection']"))
+            warnings = route_el.xpath(".//*[local-name()='Warning']")
+            errors_el = route_el.xpath(".//*[local-name()='Error']")
             routes.append({
                 "name": route_name,
-                "roads": roads_in_route,
+                "roads": road_ids,
+                "section_count": section_count,
                 "warnings": len(warnings),
                 "errors": len(errors_el),
             })
@@ -54,7 +64,7 @@ def _try_text(data: bytes) -> dict[str, Any]:
         if stripped.lower().startswith("route") or stripped.lower().startswith("[route"):
             if current:
                 routes.append(current)
-            current = {"name": stripped, "roads": [], "warnings": 0, "errors": 0}
+            current = {"name": stripped, "roads": [], "section_count": 0, "warnings": 0, "errors": 0}
         elif current and ("road" in stripped.lower()):
             current["roads"].append(stripped)
         elif current and "warning" in stripped.lower():
@@ -92,6 +102,16 @@ def get_route_count(data: dict) -> int:
 
 def get_roads_per_route(data: dict) -> list[list[str]]:
     return [r["roads"] for r in data.get("routes", [])]
+
+
+def get_route_segment_counts(data: dict) -> list[int]:
+    """Number of road segments per route: explicit <Road> ids when present, else the
+    dSPACE <RouteSection> count. Used by CH_MD_03 (route must span >= 2 roads)."""
+    counts: list[int] = []
+    for r in data.get("routes", []):
+        roads = r.get("roads", [])
+        counts.append(len(roads) if roads else int(r.get("section_count", 0)))
+    return counts
 
 
 def route_has_warnings(data: dict) -> list[bool]:
