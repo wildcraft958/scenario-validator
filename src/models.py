@@ -172,8 +172,9 @@ class SummaryStats(BaseModel):
     automatable_total: int = 0
     automatable_passed: int = 0
     automatable_failed: int = 0
-    # Reporter layout, carried from config so write_excel stays config-free.
-    validation_column_widths: dict[int, int] = {}
+    # Reviewer-checklist export layout, carried from config (the team hand-creates that
+    # file, so its widths are tunable). The native Validation sheet widths stay hardcoded.
+    checklist_column_widths: dict[int, int] = {}
 
     @classmethod
     def from_results(
@@ -185,7 +186,7 @@ class SummaryStats(BaseModel):
         scenario_dir: str = "",
         config_path: str = "",
         cli_command: str = "",
-        validation_column_widths: dict[int, int] | None = None,
+        checklist_column_widths: dict[int, int] | None = None,
     ) -> SummaryStats:
         passed = sum(1 for r in results if r.status == "PASS")
         failed = sum(1 for r in results if r.status == "FAIL")
@@ -219,7 +220,7 @@ class SummaryStats(BaseModel):
             automatable_total=automatable_total,
             automatable_passed=automatable_passed,
             automatable_failed=automatable_failed,
-            validation_column_widths=validation_column_widths or {},
+            checklist_column_widths=checklist_column_widths or {},
         )
 
 
@@ -350,13 +351,13 @@ class Config(BaseModel):
     traffic_handedness: str = "LHT"
     # Optional files reported by NM_03 - absent files do NOT cause FAIL.
     optional_standalone_files: list[str] = []
-    # Validation-sheet column widths (characters), keyed by 1-based column number as a
-    # string. Editable in config.json so report layout is tuned without touching code;
-    # any column omitted here falls back to the built-in default. Columns: 1 Check ID,
-    # 2 Category, 3 Check name, 4 Result, 5 Comment, 6 Source file, 7 Timestamp,
-    # 8 Automation Level, 9 Automation - why.
-    validation_column_widths: dict[str, int] = Field(default_factory=lambda: {
-        "1": 16, "2": 16, "3": 52, "4": 10, "5": 60, "6": 22, "7": 20, "8": 20, "9": 50,
+    # Column widths for the reviewer-checklist export (--checklist) ChecklistFinal sheet,
+    # keyed by 1-based column number as a string. The team hand-creates this file, so its
+    # layout is tuned in config.json rather than code. Columns: 2 Category, 3 CheckPoint
+    # Number, 4 Check Points, 5 Self Review, 6 Review1, 7 Review2, 8 Automation Level,
+    # 9 Automation - why. Any column omitted falls back to the built-in default.
+    checklist_column_widths: dict[str, int] = Field(default_factory=lambda: {
+        "2": 16, "3": 18, "4": 72, "5": 12, "6": 14, "7": 14, "8": 20, "9": 50,
     })
     # Entity names exempt from the CH_SC_22 NCAP-folder rule. Per checklist Prerequisites,
     # the SOV (vehicle overtaken by VUT in CCFhol) "can either be a GVT or a real vehicle",

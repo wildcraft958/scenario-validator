@@ -41,6 +41,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--no-rd", action="store_true", help="Skip Model Desk .rd checks")
     parser.add_argument("--quiet", action="store_true", help="Suppress console output")
     parser.add_argument(
+        "--checklist", action="store_true",
+        help="Also write a reviewer-checklist workbook (Review_Checklist_*.xlsx) matching the team's review format",
+    )
+    parser.add_argument(
         "--check-config", action="store_true",
         help="Validate the config file, print a summary of effective settings, and exit",
     )
@@ -354,7 +358,7 @@ def run_validation(
         scenario_dir=str(scenario_dir),
         config_path=str(effective_config_path.resolve()),
         cli_command=cli_command,
-        validation_column_widths={int(k): v for k, v in config.validation_column_widths.items()},
+        checklist_column_widths={int(k): v for k, v in config.checklist_column_widths.items()},
     )
 
     return all_results, stats
@@ -425,6 +429,13 @@ def main() -> int:
 
     write_excel(results, stats, excel_path)
 
+    checklist_path = None
+    if args.checklist:
+        from src.reporter import write_reference_checklist
+        checklist_path = output_dir / f"Review_Checklist_{stats.scenario_name}_{ts_suffix}.xlsx"
+        write_reference_checklist(results, stats, checklist_path)
+        log.info("Reviewer checklist written: %s", checklist_path)
+
     exit_code = 0 if stats.failed == 0 else 1
     log.info("Excel written: %s", excel_path)
     log.info("Exit status: %s", exit_code)
@@ -440,6 +451,8 @@ def main() -> int:
         if stats.critical_failures:
             print(f"  FAILURES : {', '.join(stats.critical_failures)}")
         print(f"  Report   : {excel_path}")
+        if checklist_path:
+            print(f"  Checklist: {checklist_path}")
         print(f"  Log      : {log_path}")
         print("=" * 60)
 
