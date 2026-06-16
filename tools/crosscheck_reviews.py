@@ -36,7 +36,7 @@ COMPARABLE = (
     + [f"CH_RD_0{i}" for i in range(1, 7)]
     + [f"CH_SC_{i:02d}" for i in range(1, 23)]
     + [f"CH_MD_0{i}" for i in range(1, 6)]
-    + ["CH_MR_01", "CH_MR_02", "CH_FB_01"]
+    + ["CH_MR_01", "CH_MR_02", "CH_FB_01", "CH_FB_02"]
 )
 
 

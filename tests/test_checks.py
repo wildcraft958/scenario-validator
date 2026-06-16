@@ -1138,7 +1138,8 @@ class TestModelReviewSpeedSanity:
 class TestFunctionalBlock:
     """CH_FB_01 - ENCAP functional / Test-Automation workbook provisioning."""
 
-    def test_fb_01_present_parseable_manual_review(self, config, tmp_path):
+    def test_fb_01_present_valid_passes(self, config, tmp_path):
+        # Present + valid workbook PASSes; the column content is owned by CH_FB_02.
         base = "AEB_CCRs_50VUT_0GVT_50Imp"
         (tmp_path / f"{base}.rrscene").write_text("rrscene", encoding="utf-8")
         (tmp_path / config.functional_file_name(base)).write_bytes(_workbook_bytes())
@@ -1146,7 +1147,7 @@ class TestFunctionalBlock:
         result = check_fb_01(tmp_path, config)
         assert result.check_id == "CH_FB_01"
         assert result.category == "FunctionalBlock"
-        assert result.status == "MANUAL_REVIEW"
+        assert result.status == "PASS"
 
     def test_fb_01_empty_file_fails(self, config, tmp_path):
         base = "AEB_CCRs_50VUT_0GVT_50Imp"

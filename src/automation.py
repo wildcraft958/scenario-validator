@@ -82,8 +82,8 @@ AUTOMATION_LEVEL: dict[str, tuple[AutomationLevel, str]] = {
     "CH_MR_01": (_FULL, "Sanity-checks VUT/asset speed values from the .xosc for garbage/negative/implausible values."),
     "CH_MR_02": (_PARTIAL, "Measures GVT/EMT deceleration from the trajectory for braking scenarios; confirm in the macro."),
     # ---- Functional block ----
-    "CH_FB_01": (_PARTIAL, "Confirms the ENCAP functional workbook is present and a valid workbook; column values are checked manually (CH_FB_02)."),
-    "CH_FB_02": (_MANUAL, "TA-file columns J-N updated per fellow count - confirmed manually in the workbook."),
+    "CH_FB_01": (_FULL, "Confirms the ENCAP functional workbook is present and is a valid workbook (OOXML)."),
+    "CH_FB_02": (_PARTIAL, "Reads the TA workbook Set_initial_position row and checks the object display-switches/positions match the fellow count."),
 }
 
 

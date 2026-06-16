@@ -181,6 +181,52 @@ class TestRD04ObstructionPrecondition:
         assert rd04.status in ("PASS", "FAIL"), rd04.comment
 
 
+class TestFB02TaWorkbook:
+    """CH_FB_02 reads the TA workbook Set_initial_position row and matches DispSW/positions
+    to the fellow count (PASS on a clean match, MANUAL otherwise - never a brittle FAIL)."""
+
+    def _scenario(self, tmp_path, config, n_active: int):
+        base = "AEB_CCFtap_10VUT_30GVT_50Imp"
+        (tmp_path / f"{base}.rrscene").write_text("x", encoding="utf-8")
+        xosc = (
+            '<?xml version="1.0"?><OpenSCENARIO><Entities>'
+            '<ScenarioObject name="VUT"><Vehicle name="VUT"/></ScenarioObject>'
+            '<ScenarioObject name="GVT"><Vehicle name="GVT"/></ScenarioObject>'
+            "</Entities></OpenSCENARIO>"
+        )
+        (tmp_path / f"{base}.xosc").write_text(xosc, encoding="utf-8")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "TAsenario"
+        headers = {10: "Obj1_DispSW", 11: "Obj2_DispSW", 12: "Obj3_DispSW", 13: "Obj4_DispSW",
+                   14: "Obj5_DispSW", 15: "Obj1_Vertical", 16: "Obj2_Vertical", 17: "Obj3_Vertical",
+                   18: "Obj4_Vertical", 19: "Obj5_Vertical"}
+        for col, name in headers.items():
+            ws.cell(row=4, column=col, value=name)
+        ws.cell(row=10, column=2, value="Set_initial_position")
+        for i in range(5):
+            ws.cell(row=10, column=10 + i, value=2 if i < n_active else 0)        # DispSW J-N
+            ws.cell(row=10, column=15 + i, value=12.5 if i < n_active else 0)      # Vertical O-S
+        wb.save(tmp_path / config.functional_file_name(base))
+        return tmp_path
+
+    def test_matching_fellow_count_passes(self, config, tmp_path):
+        from src.checks.functional_block import check_fb_02
+        d = self._scenario(tmp_path, config, n_active=1)  # 1 fellow (GVT), 1 active object
+        result = check_fb_02(d, config)
+        assert result.status == "PASS", result.comment
+
+    def test_mismatch_is_manual(self, config, tmp_path):
+        from src.checks.functional_block import check_fb_02
+        d = self._scenario(tmp_path, config, n_active=2)  # 2 active but only 1 fellow
+        assert check_fb_02(d, config).status == "MANUAL_REVIEW"
+
+    def test_missing_workbook_is_manual(self, config, tmp_path):
+        from src.checks.functional_block import check_fb_02
+        (tmp_path / "AEB_CCFtap_10VUT_30GVT_50Imp.rrscene").write_text("x", encoding="utf-8")
+        assert check_fb_02(tmp_path, config).status == "MANUAL_REVIEW"
+
+
 class TestRdSegmentCounts:
     def test_dspace_routesection_counted(self, tmp_path):
         xml = (
