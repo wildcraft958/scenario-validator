@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
+from .automation import automation_for
+
 # The four verdict states every check returns. Shared so each check module's _make()
 # helper can type its `status` parameter without a per-call type: ignore.
 CheckStatus = Literal["PASS", "FAIL", "NA", "MANUAL_REVIEW"]
@@ -113,6 +115,10 @@ class CheckResult(BaseModel):
     comment: str = ""
     source_file: str = ""
     automatable_or_manual: Literal["Automatable", "Manual"] = "Automatable"
+    # Intrinsic trust tier (Fully/Partially Automated or Manual) + one-line reason,
+    # looked up from the automation registry by check id. See src/automation.py.
+    automation_level: str = ""
+    automation_note: str = ""
     timestamp: str = Field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     suggested_fix: str = ""
 
@@ -122,6 +128,10 @@ class CheckResult(BaseModel):
             self.automatable_or_manual = "Manual"
         if self.status == "FAIL" and not self.suggested_fix:
             self.suggested_fix = self.comment or "Review the failing check and correct the source data."
+        if not self.automation_level or not self.automation_note:
+            level, note = automation_for(self.check_id)
+            self.automation_level = self.automation_level or level
+            self.automation_note = self.automation_note or note
         return self
 
     @property
@@ -139,6 +149,8 @@ class CheckResult(BaseModel):
             self.comment,
             self.source_file,
             self.timestamp,
+            self.automation_level,
+            self.automation_note,
         ]
 
 
@@ -160,6 +172,8 @@ class SummaryStats(BaseModel):
     automatable_total: int = 0
     automatable_passed: int = 0
     automatable_failed: int = 0
+    # Reporter layout, carried from config so write_excel stays config-free.
+    validation_column_widths: dict[int, int] = {}
 
     @classmethod
     def from_results(
@@ -171,6 +185,7 @@ class SummaryStats(BaseModel):
         scenario_dir: str = "",
         config_path: str = "",
         cli_command: str = "",
+        validation_column_widths: dict[int, int] | None = None,
     ) -> SummaryStats:
         passed = sum(1 for r in results if r.status == "PASS")
         failed = sum(1 for r in results if r.status == "FAIL")
@@ -204,6 +219,7 @@ class SummaryStats(BaseModel):
             automatable_total=automatable_total,
             automatable_passed=automatable_passed,
             automatable_failed=automatable_failed,
+            validation_column_widths=validation_column_widths or {},
         )
 
 
@@ -334,19 +350,27 @@ class Config(BaseModel):
     traffic_handedness: str = "LHT"
     # Optional files reported by NM_03 - absent files do NOT cause FAIL.
     optional_standalone_files: list[str] = []
+    # Validation-sheet column widths (characters), keyed by 1-based column number as a
+    # string. Editable in config.json so report layout is tuned without touching code;
+    # any column omitted here falls back to the built-in default. Columns: 1 Check ID,
+    # 2 Category, 3 Check name, 4 Result, 5 Comment, 6 Source file, 7 Timestamp,
+    # 8 Automation Level, 9 Automation - why.
+    validation_column_widths: dict[str, int] = Field(default_factory=lambda: {
+        "1": 16, "2": 16, "3": 52, "4": 10, "5": 60, "6": 22, "7": 20, "8": 20, "9": 50,
+    })
     # Entity names exempt from the CH_SC_22 NCAP-folder rule. Per checklist Prerequisites,
     # the SOV (vehicle overtaken by VUT in CCFhol) "can either be a GVT or a real vehicle",
     # so a non-NCAP asset path is protocol-legal for it.
     sov_entity_names: list[str] = ["SOV"]
-    # ---- Scenario filename grammar (CH_NM_02) ----
+    # ---- Scenario filename grammar (CH_NM_04) ----
     # The team names every scenario base as:
     #   <program>_<type>_<n>VUT_<n><TargetType>_<n>Imp   e.g. AEB_CCFtap_10VUT_30GVT_50Imp
-    # These knobs let NM_02 validate that structure (and cross-check the values) without
+    # These knobs let NM_04 validate that structure (and cross-check the values) without
     # any code edit when the convention grows.
     allowed_programs: list[str] = ["AEB"]
     target_type_tokens: list[str] = []          # GVT / EPTa / EPTc / EBTa / EMT / ...
     # Acceptable OpenSCENARIO entity categories for each filename target token - lets
-    # CH_NM_02 catch a mislabeled filename (e.g. "30GVT" on a pedestrian-category target)
+    # CH_NM_04 catch a mislabeled filename (e.g. "30GVT" on a pedestrian-category target)
     # WITHOUT false-flagging RoadRunner's export reality: it has no cyclist/motorcyclist
     # OSC category, so EBTa/EMT legitimately export as <Vehicle>. Each token therefore maps
     # to the SET of categories that are protocol-correct for it (overlap = no mismatch).
@@ -357,7 +381,7 @@ class Config(BaseModel):
     })
     vut_speed_suffix: str = "VUT"
     impact_suffix: str = "Imp"
-    # Impact-overlap is a protocol *variant* parameter (10/25/50/75/90 ...). NM_02 checks the
+    # Impact-overlap is a protocol *variant* parameter (10/25/50/75/90 ...). NM_04 checks the
     # filename token is one of these; exact-overlap correctness stays with CH_SC_16/17.
     allowed_impact_overlaps: list[float] = [0, 10, 25, 50, 75, 90, 100]
     # ---- Associated / affix files (CH_NM_03, CH_FB_01) ----

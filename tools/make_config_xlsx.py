@@ -204,8 +204,11 @@ def main() -> int:
     b = Config.load(Path(args.out)).model_dump()
     # prefix ORDER is irrelevant (prefix matching) and the in-JSON 'description'
     # doc note has no behavioural effect - normalise both before comparing.
+    # validation_column_widths is a JSON-only report-layout setting (not surfaced in the
+    # Excel sheets), so it would always differ; drop it from the comparison.
     for d in (a, b):
         d["naming_convention"] = sorted(d["naming_convention"].get("valid_prefixes", []))
+        d.pop("validation_column_widths", None)
     if a != b:
         for field in a:
             if a[field] != b[field]:

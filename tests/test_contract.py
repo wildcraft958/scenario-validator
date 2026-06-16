@@ -189,7 +189,7 @@ def test_cli_success_and_report_contract(tmp_path: Path) -> None:
 
     wb = openpyxl.load_workbook(latest_xlsx(out))
     assert wb.sheetnames[:3] == ["Validation", "Issues Log", "Run Summary"]
-    assert [wb["Validation"].cell(row=3, column=i).value for i in range(1, 8)] == [
+    assert [wb["Validation"].cell(row=3, column=i).value for i in range(1, 10)] == [
         "Check ID",
         "Category",
         "Check name",
@@ -197,6 +197,8 @@ def test_cli_success_and_report_contract(tmp_path: Path) -> None:
         "Comment",
         "Source file",
         "Timestamp",
+        "Automation Level",
+        "Automation - why",
     ]
     rows = validation_rows(latest_xlsx(out))
     assert rows["CH_NM_03"] == "Yes"
@@ -257,8 +259,8 @@ def test_base_name_mismatch_detected(tmp_path: Path) -> None:
     result = run_cli(scenario_dir, out)
     assert result.returncode == 1
     rows = validation_rows(latest_xlsx(out))
-    # base-name mismatch + duplicate/case detection folded into CH_NM_04
-    assert rows["CH_NM_04"] == "No"
+    # base-name mismatch + duplicate/case detection is CH_NM_05
+    assert rows["CH_NM_05"] == "No"
 
 
 def test_quiet_suppresses_console_but_writes_log(tmp_path: Path) -> None:

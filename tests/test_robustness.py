@@ -649,13 +649,13 @@ class TestSC10JunctionWaypoints:
         assert result.status == "PASS"
 
 
-class TestNM02FilenamePattern:
-    """CH_NM_02: structured filename + value cross-check."""
+class TestNM04FilenamePattern:
+    """CH_NM_04: structured filename + value cross-check."""
 
     def _check(self, config, tmp_path, base):
         (tmp_path / f"{base}.rrscene").write_text("rrscene", encoding="utf-8")
-        from src.checks.naming import check_nm_02
-        return check_nm_02(tmp_path, config)
+        from src.checks.naming import check_nm_04
+        return check_nm_04(tmp_path, config)
 
     def test_real_car_base_passes(self, config, tmp_path):
         assert self._check(config, tmp_path, "AEB_CCFtap_20VUT_45GVT_50Imp").status == "PASS"

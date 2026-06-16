@@ -203,7 +203,7 @@ scenario_validator/
 │   │   ├── xodr.py           # OpenDRIVE parser (secure lxml)
 │   │   └── rd.py             # Model Desk route-file parser
 │   └── checks/
-│       ├── naming.py         # Naming convention checks (CH_NM_01..05)
+│       ├── naming.py         # Naming convention checks (CH_NM_01..06)
 │       ├── road.py           # Road layout checks (CH_RD_01..06)
 │       ├── scenario.py       # Scenario behaviour checks (CH_SC_01..22)
 │       ├── model_desk.py     # Model Desk route checks (CH_MD_01..05)

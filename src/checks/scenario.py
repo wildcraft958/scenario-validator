@@ -448,7 +448,7 @@ def check_sc_08(xosc_root: Any, config: Config, scenario_tag: str | None = None)
         facts.append(f"turn sub-variant {side} turn / target {cross} direction (CH_SC_20)")
 
     covered = (
-        "naming (CH_NM_01-05), road & junction layout (CH_RD), Init positions and timing "
+        "naming (CH_NM_01-06), road & junction layout (CH_RD), Init positions and timing "
         "(CH_SC_02-13), zero-speed targets (CH_SC_14/15), impact location (CH_SC_16/17), VUT & "
         "target speed (CH_SC_18), turn radius (CH_SC_07)"
     )

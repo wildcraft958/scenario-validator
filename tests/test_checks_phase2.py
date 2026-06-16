@@ -184,7 +184,7 @@ class TestNM01WordBoundary:
 
 
 # ============================================================
-# CH_NM_02: target-token -> category cross-check tolerates RR cyclist-as-Vehicle
+# CH_NM_04: target-token -> category cross-check tolerates RR cyclist-as-Vehicle
 # ============================================================
 
 def _write_scenario(tmp_path: Path, base: str, target_name: str, target_tag: str) -> Path:
@@ -201,18 +201,18 @@ def _write_scenario(tmp_path: Path, base: str, target_name: str, target_tag: str
     return tmp_path
 
 
-class TestNM02CategorySets:
+class TestNM04CategorySets:
     def test_cyclist_exported_as_vehicle_does_not_flag(self, config, tmp_path):
         """RoadRunner exports EBTa as <Vehicle>; the filename token 'EBTa' must NOT be
         treated as a category mismatch -> PASS, not MANUAL_REVIEW."""
         d = _write_scenario(tmp_path, "AEB_CBTAno_20VUT_15EBTa_50Imp", "EBTa", "Vehicle")
-        from src.checks.naming import check_nm_02
-        result = check_nm_02(d, config)
+        from src.checks.naming import check_nm_04
+        result = check_nm_04(d, config)
         assert result.status == "PASS", result.comment
 
     def test_genuine_pedestrian_vs_gvt_still_flags(self, config, tmp_path):
         """A GVT filename token on a Pedestrian-category target is a real mistake -> flag."""
         d = _write_scenario(tmp_path, "AEB_CCFhos_30VUT_50GVT_50Imp", "GVT", "Pedestrian")
-        from src.checks.naming import check_nm_02
-        result = check_nm_02(d, config)
+        from src.checks.naming import check_nm_04
+        result = check_nm_04(d, config)
         assert result.status == "MANUAL_REVIEW", result.comment

@@ -354,6 +354,7 @@ def run_validation(
         scenario_dir=str(scenario_dir),
         config_path=str(effective_config_path.resolve()),
         cli_command=cli_command,
+        validation_column_widths={int(k): v for k, v in config.validation_column_widths.items()},
     )
 
     return all_results, stats

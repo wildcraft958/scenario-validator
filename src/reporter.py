@@ -39,6 +39,14 @@ _STATUS_FONT = {
     "Manual": Font(bold=True, color="FF000000"),
 }
 
+# Trust-tier fills for the Automation Level column (green = trust it, yellow = confirm,
+# grey = human decides).
+_AUTOMATION_FILL = {
+    "Fully Automated": PatternFill("solid", fgColor=_GREEN),
+    "Partially Automated": PatternFill("solid", fgColor=_YELLOW),
+    "Manual": PatternFill("solid", fgColor=_GREY),
+}
+
 _VALIDATION_HEADERS = [
     "Check ID",
     "Category",
@@ -47,8 +55,11 @@ _VALIDATION_HEADERS = [
     "Comment",
     "Source file",
     "Timestamp",
+    "Automation Level",
+    "Automation - why",
 ]
 _ISSUE_HEADERS = ["Check ID", "Category", "Issue", "File", "Suggested fix"]
+_VALIDATION_COL_CHARS = {1: 16, 2: 16, 3: 52, 4: 10, 5: 60, 6: 22, 7: 20, 8: 20, 9: 50}
 
 
 def _header_row(ws, row: int, headers: list[str]) -> None:
@@ -70,10 +81,12 @@ def _result_row(ws, row: int, result: CheckResult) -> None:
             cell.fill = _STATUS_FILL.get(str(value), PatternFill("solid", fgColor=_GREY))
             cell.font = _STATUS_FONT.get(str(value), Font())
             cell.alignment = Alignment(horizontal="center")
+        elif col_idx == 8:
+            cell.fill = _AUTOMATION_FILL.get(str(value), PatternFill("solid", fgColor=_GREY))
+            cell.alignment = Alignment(horizontal="center", wrap_text=True)
 
 
-def _set_column_widths(ws) -> None:
-    widths = {1: 16, 2: 16, 3: 52, 4: 10, 5: 60, 6: 22, 7: 20}
+def _set_column_widths(ws, widths: dict[int, int]) -> None:
     for col, width in widths.items():
         ws.column_dimensions[get_column_letter(col)].width = width
 
@@ -127,12 +140,16 @@ def write_excel(
 
     _header_row(ws, row=3, headers=_VALIDATION_HEADERS)
 
+    # Config-driven column widths, falling back to the built-in default for any column
+    # the config omits, so editing config.json never leaves a column unsized.
+    col_widths = {**_VALIDATION_COL_CHARS, **stats.validation_column_widths}
+
     data_start = 4
     for i, result in enumerate(results):
         row = data_start + i
         _result_row(ws, row, result)
 
-    _set_column_widths(ws)
+    _set_column_widths(ws, col_widths)
     ws.freeze_panes = "A4"
     # openpyxl leaves the bottom (scrollable) pane's active cell at A1, which sits inside the
     # frozen header region. Excel then scrolls the bottom pane up to row 1 on redraw, painting
@@ -142,8 +159,7 @@ def write_excel(
     # Set header rows to fixed heights; auto-size data rows
     ws.row_dimensions[1].height = 20
     ws.row_dimensions[3].height = 28
-    _VALIDATION_COL_CHARS = {1: 16, 2: 16, 3: 52, 4: 10, 5: 60, 6: 22, 7: 20}
-    _auto_row_heights(ws, data_start_row=4, col_char_widths=_VALIDATION_COL_CHARS)
+    _auto_row_heights(ws, data_start_row=4, col_char_widths=col_widths)
 
     # ---- Sheet 2: Issues log ----
     ws_issues = wb.create_sheet("Issues Log")
@@ -173,6 +189,9 @@ def write_excel(
     # ---- Sheet 3: Run Summary ----
     ws_sum = wb.create_sheet("Run Summary")
 
+    fully = sum(1 for r in results if r.automation_level == "Fully Automated")
+    partial = sum(1 for r in results if r.automation_level == "Partially Automated")
+    manual_auto = sum(1 for r in results if r.automation_level == "Manual")
     summary_rows = [
         ("Scenario Directory", stats.scenario_dir),
         ("Scenario Name", stats.scenario_name),
@@ -185,6 +204,9 @@ def write_excel(
         ("NA Count", stats.na),
         ("Manual Count", stats.manual),
         ("Automatable Pass Rate", f"{stats.pass_rate:.1f}%"),
+        ("Automation - Fully", fully),
+        ("Automation - Partially", partial),
+        ("Automation - Manual", manual_auto),
         ("Final Status", stats.final_status),
         ("CLI Command Used", stats.cli_command),
         ("Failed Check IDs", ", ".join(stats.critical_failures) or "None"),

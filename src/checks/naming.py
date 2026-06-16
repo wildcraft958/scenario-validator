@@ -1,13 +1,17 @@
 """CH_NM checks - actor naming, filename convention, and scenario file contract.
 
-Consolidated set (CH_NM_01..05):
-  NM_01  actor names inside the .xosc follow the EuroNCAP convention
-  NM_02  scenario base name follows the structured pattern AND its values agree
+NM_01..03 mirror the official reviewer checklist one-to-one; NM_04..06 are the
+extra naming guarantees this validator adds, numbered after NM_03 so they never
+collide with the reviewer numbering:
+  NM_01  actor and asset names inside the .xosc follow the EuroNCAP convention
+  NM_02  the .rrscene file name equals the .rrscenario file name (one base name)
+  NM_03  all required files are present (the 9 base files - same name, different
+         extension - plus the functional/macro workbooks); files are auto-detected
+         so a present-but-misnamed file is never missed
+  NM_04  scenario base name follows the structured pattern AND its values agree
          with the protocol (program_type_<n>VUT_<n><Target>_<n>Imp)
-  NM_03  all required files are present (7 base extensions + required affix files);
-         files are auto-detected so a present-but-misnamed file is never missed
-  NM_04  one consistent base name, no duplicate / case-collision filenames
-  NM_05  directory holds only known scenario / RoadRunner / report extensions
+  NM_05  one consistent base name, no duplicate / case-collision filenames
+  NM_06  directory holds only known scenario / RoadRunner / report extensions
 """
 from __future__ import annotations
 
@@ -22,11 +26,12 @@ CATEGORY = "Naming"
 
 def _make(check_id: str, status: CheckStatus, comment: str = "") -> CheckResult:
     descriptions = {
-        "CH_NM_01": "Actor names inside scenario follow EuroNCAP convention (VUT=Ego/VUT/Vehicle, targets=GVT/EPTa/EBTa/EPTc/EMT/SOV etc.)",
-        "CH_NM_02": "Scenario name follows program_type_<n>VUT_<n><Target>_<n>Imp and its values agree with the protocol",
-        "CH_NM_03": "All required scenario files present (7 base files + ENCAP functional + macro workbooks)",
-        "CH_NM_04": "One consistent base name, no duplicate or case-colliding filenames",
-        "CH_NM_05": "Scenario directory contains only valid RoadRunner/export/report extensions",
+        "CH_NM_01": "Actor and asset names follow the EuroNCAP convention (VUT=Ego/VUT/Vehicle; targets=GVT/EPTa/EBTa/EPTc/EMT/SOV etc.)",
+        "CH_NM_02": "The .rrscene file name matches the .rrscenario file name (one consistent base name)",
+        "CH_NM_03": "All required scenario files present (9 base files - same name, different extension - plus functional + macro workbooks)",
+        "CH_NM_04": "Scenario name follows program_type_<n>VUT_<n><Target>_<n>Imp and its values agree with the protocol",
+        "CH_NM_05": "One consistent base name, no duplicate or case-colliding filenames",
+        "CH_NM_06": "Scenario directory contains only valid RoadRunner/export/report extensions",
     }
     return CheckResult(
         check_id=check_id,
@@ -269,10 +274,54 @@ def check_nm_01(scenario_dir: Path, config: Config) -> CheckResult:
 
 
 # ---------------------------------------------------------------------------
-# CH_NM_02 - structured filename + value cross-check
+# CH_NM_02 - .rrscene name equals .rrscenario name (reviewer checklist NM_02)
 # ---------------------------------------------------------------------------
 
-def check_nm_02(scenario_dir: Path, config: Config) -> CheckResult:
+def check_nm_02(scenario_dir: Path) -> CheckResult:
+    """The .rrscene file must share its base name with the .rrscenario file.
+
+    The RoadRunner scene (.rrscene) and scenario (.rrscenario) are exported as a
+    pair and must carry the same base name; a drift between them is the classic
+    copy/rename slip the reviewer checklist (NM_02) guards against. Presence of
+    each file is owned by NM_03, so a missing side defers there rather than failing
+    here twice.
+    """
+    rrscene = sorted(scenario_dir.glob("*.rrscene"))
+    rrscenario = sorted(scenario_dir.glob("*.rrscenario"))
+    if not rrscene or not rrscenario:
+        missing = []
+        if not rrscene:
+            missing.append(".rrscene")
+        if not rrscenario:
+            missing.append(".rrscenario")
+        return _make(
+            "CH_NM_02",
+            "MANUAL_REVIEW",
+            f"Cannot compare names - {', '.join(missing)} not present (file presence is checked by CH_NM_03).",
+        )
+
+    scene_stems = {p.stem for p in rrscene}
+    scenario_stems = {p.stem for p in rrscenario}
+    shared = scene_stems & scenario_stems
+    if shared:
+        return _make(
+            "CH_NM_02",
+            "PASS",
+            f"'{sorted(shared)[0]}.rrscene' and '.rrscenario' share one base name.",
+        )
+    return _make(
+        "CH_NM_02",
+        "FAIL",
+        f".rrscene name(s) {sorted(scene_stems)} do not match .rrscenario name(s) {sorted(scenario_stems)}. "
+        "Rename the pair so both share one base name.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# CH_NM_04 - structured filename + value cross-check
+# ---------------------------------------------------------------------------
+
+def check_nm_04(scenario_dir: Path, config: Config) -> CheckResult:
     """Scenario base name must follow the structured pattern and agree with the protocol.
 
     Structure: program_type_<n>VUT_<n><Target>_<n>Imp (e.g. AEB_CCFtap_10VUT_30GVT_50Imp).
@@ -286,7 +335,7 @@ def check_nm_02(scenario_dir: Path, config: Config) -> CheckResult:
     tag = detect_scenario_tag(base, config)
     if not tag:
         return _make(
-            "CH_NM_02",
+            "CH_NM_04",
             "FAIL",
             f"Scenario name '{base}' does not contain a configured EuroNCAP scenario tag. "
             "Add the tag to config.json/scenarios or rename the scenario.",
@@ -295,7 +344,7 @@ def check_nm_02(scenario_dir: Path, config: Config) -> CheckResult:
     parsed = parse_scenario_filename(base, config)
     if not parsed.well_formed:
         return _make(
-            "CH_NM_02",
+            "CH_NM_04",
             "FAIL",
             f"Scenario name '{base}' does not match program_type_<n>VUT_<n><Target>_<n>Imp: "
             + "; ".join(parsed.problems) + ".",
@@ -304,7 +353,7 @@ def check_nm_02(scenario_dir: Path, config: Config) -> CheckResult:
     proto = config.scenario_protocol(parsed.type_tag or tag)
     if proto is None:
         return _make(
-            "CH_NM_02",
+            "CH_NM_04",
             "MANUAL_REVIEW",
             f"Filename well-formed (tag '{parsed.type_tag}'), but no scenario protocol entry "
             "matched. Add an exact config.json/scenarios entry to enable value cross-checks.",
@@ -324,7 +373,7 @@ def check_nm_02(scenario_dir: Path, config: Config) -> CheckResult:
             )
 
     if value_problems:
-        return _make("CH_NM_02", "FAIL", f"Scenario '{base}' - " + "; ".join(value_problems) + ".")
+        return _make("CH_NM_04", "FAIL", f"Scenario '{base}' - " + "; ".join(value_problems) + ".")
 
     # Cross-check the filename target-type token against the actual .xosc entity category,
     # so a mislabeled filename (e.g. '30GVT' on a pedestrian scenario) is caught.
@@ -332,11 +381,11 @@ def check_nm_02(scenario_dir: Path, config: Config) -> CheckResult:
     detail = f"tag={parsed.type_tag}, {parsed.vut_speed_kmh}km/h VUT, {parsed.target_speed_kmh}{parsed.target_type}, {parsed.impact_pct}% impact"
     if mismatch:
         return _make(
-            "CH_NM_02",
+            "CH_NM_04",
             "MANUAL_REVIEW",
             f"Filename well-formed ({detail}), but {mismatch} - likely a naming mistake; verify.",
         )
-    return _make("CH_NM_02", "PASS", f"Filename well-formed and values agree with protocol ({detail}).")
+    return _make("CH_NM_04", "PASS", f"Filename well-formed and values agree with protocol ({detail}).")
 
 
 def _target_type_category_mismatch(scenario_dir: Path, config: Config, target_type: str | None) -> str | None:
@@ -438,14 +487,14 @@ def check_nm_03(scenario_dir: Path, config: Config, skip_rd: bool = False) -> Ch
 
 
 # ---------------------------------------------------------------------------
-# CH_NM_04 - base-name consistency + duplicate / case collisions (folds old NM_06)
+# CH_NM_05 - base-name consistency + duplicate / case collisions
 # ---------------------------------------------------------------------------
 
-def check_nm_04(scenario_dir: Path, config: Config) -> CheckResult:
+def check_nm_05(scenario_dir: Path, config: Config) -> CheckResult:
     """All base files share one base name, with no duplicate or case-colliding names."""
     candidates = _base_candidate_files(scenario_dir, config)
     if not candidates:
-        return _make("CH_NM_04", "FAIL", "No base-named scenario files found")
+        return _make("CH_NM_05", "FAIL", "No base-named scenario files found")
 
     issues: list[str] = []
 
@@ -470,15 +519,15 @@ def check_nm_04(scenario_dir: Path, config: Config) -> CheckResult:
         issues.append(f"case-colliding base names: {', '.join(collisions)}")
 
     if issues:
-        return _make("CH_NM_04", "FAIL", "; ".join(issues))
-    return _make("CH_NM_04", "PASS", f"Base name '{bases[0]}' is consistent")
+        return _make("CH_NM_05", "FAIL", "; ".join(issues))
+    return _make("CH_NM_05", "PASS", f"Base name '{bases[0]}' is consistent")
 
 
 # ---------------------------------------------------------------------------
-# CH_NM_05 - extension allowlist
+# CH_NM_06 - extension allowlist
 # ---------------------------------------------------------------------------
 
-def check_nm_05(scenario_dir: Path, config: Config) -> CheckResult:
+def check_nm_06(scenario_dir: Path, config: Config) -> CheckResult:
     """Detect wrong extensions while allowing known RoadRunner / report outputs."""
     allowed_suffixes = set(config.required_file_extensions) | {
         ".geojson", ".osgb", ".xlsx", ".xlsm", ".csv", ".log",
@@ -495,26 +544,27 @@ def check_nm_05(scenario_dir: Path, config: Config) -> CheckResult:
 
     if wrong:
         return _make(
-            "CH_NM_05",
+            "CH_NM_06",
             "FAIL",
             f"Unsupported file extension(s): {', '.join(sorted(wrong))}. "
             "Use only configured scenario files plus known RoadRunner auxiliary/report outputs.",
         )
     if case_risk:
         return _make(
-            "CH_NM_05",
+            "CH_NM_06",
             "FAIL",
             f"Case-sensitive extension risk: {', '.join(sorted(case_risk))}. "
             "Use lower-case required extensions exactly.",
         )
-    return _make("CH_NM_05", "PASS")
+    return _make("CH_NM_06", "PASS")
 
 
 def run_all(scenario_dir: Path, config: Config, skip_rd: bool = False) -> list[CheckResult]:
     return [
         check_nm_01(scenario_dir, config),
-        check_nm_02(scenario_dir, config),
+        check_nm_02(scenario_dir),
         check_nm_03(scenario_dir, config, skip_rd=skip_rd),
         check_nm_04(scenario_dir, config),
         check_nm_05(scenario_dir, config),
+        check_nm_06(scenario_dir, config),
     ]
