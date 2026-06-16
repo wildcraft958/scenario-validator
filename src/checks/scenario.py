@@ -986,7 +986,12 @@ def _impact_verdict(
             f"No target entity identified. Expected ~{expected}% ±{tolerance}% per "
             f"protocol - verify in RoadRunner.",
         )
-    tgt = targets[0]
+    # Pick the PRIMARY target by its filename token (GVT/EPTc/...), not document order, so a
+    # multi-fellow scene (SOV overtaking, obstruction families) measures the VUT-vs-target
+    # impact rather than VUT-vs-SOV/obstruction. Falls back to document order when the token
+    # is unavailable (parametric / unparsable name).
+    token = getattr(parsed_name, "target_type", None) if parsed_name is not None else None
+    tgt = (_resolve_primary_target(xosc_root, config, token) if token else None) or targets[0]
     tgt_bbox = _entity_bbox(xosc_root, config, tgt)
     # EuroNCAP target reference point depends on the actor AND the motion type (§1.2.5/§1.4.1).
     osc_category = xosc.get_entity_category(xosc_root, tgt) or "Vehicle"
@@ -1013,7 +1018,7 @@ def _impact_verdict(
             check_id, "MANUAL_REVIEW",
             f"Could not estimate impact (missing/empty trajectory data). Expected "
             f"~{expected}% ±{tolerance}% per protocol. Verify in RoadRunner."
-            + _collision_course_note(xosc_root, config, vut),
+            + _collision_course_note(xosc_root, config, vut, parsed_name),
         )
 
     if not est.contact:
@@ -1125,7 +1130,7 @@ def _impact_verdict(
     )
 
 
-def _collision_course_note(xosc_root: Any, config: Config, vut: str) -> str:
+def _collision_course_note(xosc_root: Any, config: Config, vut: str, parsed_name: Any = None) -> str:
     """Time-decoupled path-intersection test for kinematic scenarios.
 
     The impact % itself IS estimated geometrically by _impact_verdict; this is only
@@ -1135,17 +1140,20 @@ def _collision_course_note(xosc_root: Any, config: Config, vut: str) -> str:
     targets = _identify_targets(xosc_root, config)
     if not targets:
         return ""
+    # Same primary-target selection as the impact estimate (token over document order).
+    token = getattr(parsed_name, "target_type", None) if parsed_name is not None else None
+    tgt = (_resolve_primary_target(xosc_root, config, token) if token else None) or targets[0]
     vut_verts = xosc.get_trajectory_vertices(xosc_root, vut)
-    tgt_verts = xosc.get_trajectory_vertices(xosc_root, targets[0])
+    tgt_verts = xosc.get_trajectory_vertices(xosc_root, tgt)
     hit = paths_intersect(vut_verts, tgt_verts)
     if hit:
         return (
-            f" Collision course CONFIRMED: VUT and {targets[0]} paths intersect "
+            f" Collision course CONFIRMED: VUT and {tgt} paths intersect "
             f"at ({hit[0]:.1f}, {hit[1]:.1f})."
         )
     if vut_verts and tgt_verts:
         return (
-            f" WARNING: VUT and {targets[0]} paths do NOT geometrically intersect - "
+            f" WARNING: VUT and {tgt} paths do NOT geometrically intersect - "
             f"verify the scenario layout."
         )
     return ""

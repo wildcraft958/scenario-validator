@@ -83,6 +83,9 @@ def main() -> int:
     we_fail: list[tuple[str, str, str, str]] = []    # ours No, reviewer Yes/NA
     human_dist: Counter = Counter()
 
+    # Metric focus: the core checklist is NM + RD + SC (<= SC_22); MD / MR / FB are extension.
+    group_match = {"core": 0, "ext": 0}
+    group_total = {"core": 0, "ext": 0}
     for rv in reviews:
         sdir = Path(rv).parent
         hv = human_verdicts(Path(rv))
@@ -99,8 +102,11 @@ def main() -> int:
             if o == "Manual":
                 defer[h] += 1
                 continue
+            group = "core" if cid.startswith(("CH_NM_", "CH_RD_", "CH_SC_")) else "ext"
+            group_total[group] += 1
             if o == h:
                 matches += 1
+                group_match[group] += 1
             else:
                 mismatch_types[f"{h}->{o}"] += 1
                 if h == "No" and o == "Yes":
@@ -109,11 +115,21 @@ def main() -> int:
                     we_fail.append((sdir.name, cid, h, ours[cid].comment[:120]))
 
     total = matches + sum(mismatch_types.values())
+
+    def pct(m, t):
+        return f"{m / t * 100:.1f}%" if t else "n/a"
+
     lines = ["# Cross-check vs hand-validated reviews", ""]
     lines.append(f"- Reviews found: **{len(reviews)}**")
     lines.append(f"- Reviewer verdict mix (Yes/NA only are real): {dict(human_dist)}")
     lines.append(f"- Comparable decisions: **{total}**  |  agreement: "
-                 f"**{matches / total * 100:.1f}%**" if total else "- no comparable decisions")
+                 f"**{pct(matches, total)}**")
+    lines.append(f"- **Core metric** (NM + RD + SC, <= SC_22): "
+                 f"**{pct(group_match['core'], group_total['core'])}** "
+                 f"({group_match['core']}/{group_total['core']})")
+    lines.append(f"- Extension (MD + MR + FB): "
+                 f"{pct(group_match['ext'], group_total['ext'])} "
+                 f"({group_match['ext']}/{group_total['ext']})")
     lines.append(f"- Our Manual defers (we measured, asked for confirm): {dict(defer)}")
     lines.append(f"- FALSE PASS (reviewer No, ours Yes): **{len(false_pass)}**")
     lines.append("")
