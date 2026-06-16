@@ -136,6 +136,51 @@ class TestReferenceChecklistExport:
 # .rd parser - dSPACE ModelDesk schema
 # ---------------------------------------------------------------------------
 
+class TestSC22ObstructionScope:
+    """CH_SC_22 is N/A when there is no static obstruction; an obstruction's asset path is
+    still validated (PASS in the NCAP folder, FAIL outside it)."""
+
+    def _root(self, body: bytes):
+        from lxml import etree
+        xml = b'<?xml version="1.0"?><OpenSCENARIO><Entities>' + body + b"</Entities></OpenSCENARIO>"
+        return etree.parse(__import__("io").BytesIO(xml),
+                           etree.XMLParser(no_network=True)).getroot()
+
+    _VUT = b'<ScenarioObject name="VUT"><Vehicle name="VUT" model3d="Vehicles/MyCar.rrvehicle"/></ScenarioObject>'
+
+    def test_no_obstruction_is_na(self, config):
+        from src.checks.scenario import check_sc_22
+        body = self._VUT + b'<ScenarioObject name="GVT"><Vehicle name="GVT" model3d="NCAP Assets/GVT.rrvehicle"/></ScenarioObject>'
+        assert check_sc_22(self._root(body), config).status == "NA"
+
+    def test_obstruction_in_ncap_folder_passes(self, config):
+        from src.checks.scenario import check_sc_22
+        body = self._VUT + b'<ScenarioObject name="Obstruction1"><Vehicle name="Obstruction1" model3d="NCAP Assets/obs.rrvehicle"/></ScenarioObject>'
+        assert check_sc_22(self._root(body), config).status == "PASS"
+
+    def test_obstruction_outside_ncap_folder_fails(self, config):
+        from src.checks.scenario import check_sc_22
+        body = self._VUT + b'<ScenarioObject name="Obstruction1"><Vehicle name="Obstruction1" model3d="Props/box.rrvehicle"/></ScenarioObject>'
+        assert check_sc_22(self._root(body), config).status == "FAIL"
+
+
+class TestRD04ObstructionPrecondition:
+    """CH_RD_04's (0,0,0) origin rule only applies to scenarios with static objects at the
+    intersection, applied at the run level where the .xosc entities are known."""
+
+    def test_no_obstruction_scenario_is_na(self):
+        from validator import run_validation
+        results, _ = run_validation(ROOT / "examples" / "CCFtap", skip_rd=True)
+        rd04 = {r.check_id: r for r in results}["CH_RD_04"]
+        assert rd04.status == "NA", rd04.comment
+
+    def test_obstruction_scenario_still_evaluated(self):
+        from validator import run_validation
+        results, _ = run_validation(ROOT / "examples" / "CPNCO", skip_rd=True)
+        rd04 = {r.check_id: r for r in results}["CH_RD_04"]
+        assert rd04.status in ("PASS", "FAIL"), rd04.comment
+
+
 class TestRdSegmentCounts:
     def test_dspace_routesection_counted(self, tmp_path):
         xml = (

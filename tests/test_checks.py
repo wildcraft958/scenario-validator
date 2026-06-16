@@ -637,7 +637,9 @@ class TestNegativeChecks:
         root = _parse_xml(xml)
         from src.checks.scenario import check_sc_22
         result = check_sc_22(root, config)
-        assert result.status == "PASS", f"NCAP catalogName should PASS. Got: {result.comment}"
+        # NCAP path is accepted (not FAILed); with no obstruction in the scene the checklist
+        # row is N/A, but the target asset is still verified and reported.
+        assert result.status in ("PASS", "NA"), f"NCAP catalogName must not FAIL. Got: {result.comment}"
         assert "[catalog]" in result.comment
 
     def test_sc_22_catalog_reference_non_ncap_fails(self, config):
@@ -722,7 +724,9 @@ class TestNegativeChecks:
         root = _parse_xml(xml)
         from src.checks.scenario import check_sc_22
         result = check_sc_22(root, config)
-        assert result.status == "PASS", f"SOV with real-vehicle path must be exempt. Got: {result.comment}"
+        # The SOV path must not be FAILed (it is exempt); the terminal verdict is NA here
+        # because the scene has no static obstruction.
+        assert result.status in ("PASS", "NA"), f"SOV path must not FAIL. Got: {result.comment}"
         assert "exempt" in result.comment
 
     def test_catalog_filepaths_first_catalog_ref_wins(self, config):

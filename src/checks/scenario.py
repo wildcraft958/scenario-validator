@@ -1526,11 +1526,42 @@ def check_sc_21(xosc_root: Any, config: Config) -> CheckResult:
     )
 
 
+def _obstruction_entity_names(xosc_root: Any, config: Config) -> list[str]:
+    """Static obstruction entities in the scene. A non-VUT entity counts as an obstruction
+    when its name matches a configured obstruction pattern (Obstruction/StaticVehicle/...),
+    OR it starts at speed 0 with no trajectory AND is not a stationary VRU target
+    (EMT/EPTa/EPTc/EBTa). The VRU exclusion keeps a designed-stationary pedestrian/cyclist
+    target from being mistaken for an obstruction; the speed-0/no-trajectory branch still
+    catches obstruction vehicles whose name is not in the pattern list (e.g.
+    LargeObstructionVehicle). Moving targets (with a trajectory) are never obstructions."""
+    entities = [xosc.get_entity_name(e) for e in xosc.get_entities(xosc_root)]
+    vut = _identify_vut(xosc_root, config)
+    static_patterns = [p.upper() for p in config.static_target_name_patterns]
+    vru_patterns = [p.upper() for p in config.stationary_target_name_patterns]
+    out: list[str] = []
+    for e in entities:
+        if e == vut:
+            continue
+        upper = e.upper()
+        name_is_obstruction = any(upper.startswith(p) for p in static_patterns)
+        name_is_vru = any(upper.startswith(p) for p in vru_patterns)
+        explicit_static = (
+            xosc.get_init_speed(xosc_root, e) == 0.0
+            and not xosc.has_init_follow_trajectory(xosc_root, e)
+        )
+        if name_is_obstruction or (explicit_static and not name_is_vru):
+            out.append(e)
+    return out
+
+
 def check_sc_22(xosc_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
     """
     All obstructions placed in NCAP Asset folder.
 
     Official checklist wording: "All obstructions should be placed in NCAP Asset folder in RR".
+    The checklist row is about OBSTRUCTIONS, so it is NOT APPLICABLE to a scenario with no
+    static obstruction (only a moving target) - the reviewer marks those N/A. We still verify
+    every non-VUT asset path so a target pointing outside the NCAP/asset folder still FAILs.
     VUT is excluded - it is an OEM custom model not expected in the NCAP Asset folder.
     SOV entities (config.sov_entity_names) are exempt: per checklist Prerequisites the SOV
     "can either be a GVT or a real vehicle", so a non-NCAP path is protocol-legal.
@@ -1540,11 +1571,18 @@ def check_sc_22(xosc_root: Any, config: Config, scenario_tag: str | None = None)
     entity_sources = xosc.get_entity_catalog_filepaths(xosc_root)
     vut = _identify_vut(xosc_root, config)
     sov_names = {n.upper() for n in getattr(config, "sov_entity_names", ["SOV"])}
+    obstructions = _obstruction_entity_names(xosc_root, config)
 
     # Remove VUT - only targets and static obstructions are required to use NCAP assets
     non_vut = {name: (path, src) for name, (path, src) in entity_sources.items() if name != vut}
 
     if not non_vut:
+        if not obstructions:
+            return _make(
+                "CH_SC_22",
+                "NA",
+                "No static obstructions in this scenario, so the NCAP Asset folder rule does not apply.",
+            )
         return _make(
             "CH_SC_22",
             "MANUAL_REVIEW",
@@ -1566,7 +1604,7 @@ def check_sc_22(xosc_root: Any, config: Config, scenario_tag: str | None = None)
         elif path.startswith("$") or path.startswith("%"):
             param_refs.append(f"'{entity_name}' ({src}: {path})")
         elif "ncap" not in path.lower() and "asset" not in path.lower():
-            wrong.append(f"'{entity_name}' [{src}] → '{path}'")
+            wrong.append(f"'{entity_name}' [{src}] -> '{path}'")
         else:
             ok_items.append(f"'{entity_name}' [{src}]")
 
@@ -1585,6 +1623,17 @@ def check_sc_22(xosc_root: Any, config: Config, scenario_tag: str | None = None)
         if param_refs:
             msg += f" Also verify parameterized refs manually: {'; '.join(param_refs)}."
         return _make("CH_SC_22", "FAIL", msg)
+
+    # No wrong asset paths. The checklist row only concerns OBSTRUCTIONS, so with none in
+    # the scene it is not applicable (the reviewer marks these N/A) - even though the moving
+    # target's asset path was verified above and is fine.
+    if not obstructions:
+        ok_note = f" (target asset(s) verified: {', '.join(ok_items)})" if ok_items else ""
+        return _make(
+            "CH_SC_22",
+            "NA",
+            f"No static obstructions in this scenario, so the NCAP Asset folder rule does not apply.{ok_note}",
+        )
 
     if param_refs:
         return _make(

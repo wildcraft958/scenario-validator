@@ -225,6 +225,26 @@ def run_validation(
             for i in range(1, 23)
         ]
 
+    # ---- CH_RD_04 entity-based precondition ----
+    # The (0,0,0) leftmost-road origin rule applies only to junction scenarios that place
+    # STATIC OBJECTS at the intersection (EuroNCAP checklist wording). The road check sees
+    # only the .xodr and cannot know the scenario entities, so apply that precondition here:
+    # with no static obstruction in the .xosc, RD_04 is not applicable -> NA.
+    if xosc_root is not None:
+        from src.checks.scenario import _obstruction_entity_names
+        if not _obstruction_entity_names(xosc_root, config):
+            from src.models import CheckResult
+            road_results = [
+                CheckResult(
+                    check_id="CH_RD_04", category="Road", description=result.description,
+                    status="NA",
+                    comment="No static objects at the intersection, so the leftmost-road "
+                            "(0,0,0) origin rule does not apply (CH_RD_04 covers obstruction scenarios).",
+                    source_file=result.source_file,
+                ) if (result.check_id == "CH_RD_04" and result.status in ("PASS", "FAIL")) else result
+                for result in road_results
+            ]
+
     # ---- Model Desk checks ----
     md_results = []
     if skip_rd:
