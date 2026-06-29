@@ -27,34 +27,11 @@ _SCRIPT_DIR = Path(__file__).resolve().parent.parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
+from src.discovery import discover_scenarios  # noqa: E402,F401
 from src.models import Config  # noqa: E402
 
 _STATUS_ORDER = ["PASS", "FAIL", "MANUAL_REVIEW", "NA"]
 _STATUS_LABEL = {"PASS": "Yes", "FAIL": "No", "MANUAL_REVIEW": "Manual", "NA": "NA"}
-
-
-def discover_scenarios(root: Path) -> tuple[list[Path], list[Path]]:
-    """Return (scenario_dirs, incompatible_dirs).
-
-    A scenario dir directly contains >=1 .xosc. An incompatible dir has a
-    RoadRunner-native export (.rrscene/.rrscenario) but no .xosc, so the full
-    OpenSCENARIO/OpenDRIVE export the validator needs is absent.
-    """
-    scenario_dirs: list[Path] = []
-    incompatible: list[Path] = []
-    for path in sorted(root.rglob("*")):
-        if not path.is_dir():
-            continue
-        has_xosc = any(p.suffix == ".xosc" for p in path.iterdir() if p.is_file())
-        if has_xosc:
-            scenario_dirs.append(path)
-            continue
-        has_rr = any(
-            p.suffix in (".rrscene", ".rrscenario") for p in path.iterdir() if p.is_file()
-        )
-        if has_rr:
-            incompatible.append(path)
-    return scenario_dirs, incompatible
 
 
 def family_of(scenario_dir: Path, config: Config) -> str:
