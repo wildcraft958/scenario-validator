@@ -7,11 +7,13 @@ Sheet 3: Run Summary  - aggregate stats and audit metadata
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 
 import openpyxl
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.views import Selection
 
 from .models import CheckResult, SummaryStats
@@ -25,6 +27,23 @@ _YELLOW = "FFFFC000"
 _GREY = "FFD3D3D3"
 _BLUE_HDR = "FF4472C4"
 _WHITE = "FFFFFFFF"
+
+# Reference-checklist palette - literal ARGB lifted from the reviewer workbook so the
+# --checklist export is an exact colour replica. The reference uses the older Office theme
+# (accent1 = 5B9BD5), so openpyxl theme references would resolve to a different blue;
+# baking the resolved RGB keeps the colours identical.
+_REF_LABEL_FILL = PatternFill("solid", fgColor="FF9DC3E6")     # metadata + version + issues headers
+_REF_HEADER_FILL = PatternFill("solid", fgColor="FFDEEBF7")    # main checklist header row
+_REF_CATEGORY_FILL = PatternFill("solid", fgColor="FFFFFFFF")  # merged category cells (white)
+_THIN = Side(style="thin")
+_BORDER_ALL = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
+
+# Reference column widths for the ChecklistFinal sheet (B-H), used as the default the
+# config can still override per column.
+_REF_CHECKLIST_WIDTHS = {
+    2: 12.140625, 3: 18.7109375, 4: 196.7109375, 5: 12.7109375,
+    6: 11.85546875, 7: 11.85546875, 8: 13.0,
+}
 
 _STATUS_FILL = {
     "Yes": PatternFill("solid", fgColor=_GREEN),
@@ -91,7 +110,7 @@ def _set_column_widths(ws, widths: dict[int, int]) -> None:
         ws.column_dimensions[get_column_letter(col)].width = width
 
 
-def _auto_row_heights(ws, data_start_row: int, col_char_widths: dict[int, int],
+def _auto_row_heights(ws, data_start_row: int, col_char_widths: Mapping[int, float],
                       min_height: float = 15.0, line_height: float = 14.0) -> None:
     """Set row heights so wrapped text is fully visible without double-clicking.
 
@@ -233,21 +252,38 @@ def write_excel(
     return output_path
 
 
+def _issue_details(r: CheckResult) -> str:
+    """Issues Log 'Details' text for a failed or manual check."""
+    body = r.comment or r.description
+    if r.result == "Manual":
+        return f"{r.check_id} ({r.category}): manual check - verify: {body}"
+    text = f"{r.check_id} ({r.category}): {body}"
+    if r.suggested_fix and r.suggested_fix != r.comment:
+        text = f"{text}  Fix: {r.suggested_fix}"
+    return text
+
+
 def write_reference_checklist(
     results: list[CheckResult],
     stats: SummaryStats,
     output_path: Path,
 ) -> Path:
-    """Write a workbook matching the reviewer checklist (Summary / ChecklistFinal /
-    Prequisites). Our verdict fills Self Review; Review1/Review2 stay blank for humans;
-    two extra columns carry the automation trust level. Checkpoints the validator does
-    not compute (MD_06-11, FB_02) export as Manual rows with the reference wording."""
-    from .automation import automation_for
+    """Write a workbook that replicates the reviewer checklist (Summary / ChecklistFinal /
+    Prequisites) - same sheets, column layout and colours - so it drops straight into the
+    team's review flow. Self Review carries our verdict as text (like the reviewer file);
+    Review1/Review2 stay blank for humans. The Issues Log table is filled from the run: one
+    row per failed or manual check. Checkpoints the validator does not compute (MD_06-11,
+    FB_02) export as Manual rows with the reference wording."""
     from .checklist_template import (
         CHECKLIST_COLUMNS,
         CHECKLIST_HEADER_LABELS,
+        ISSUES_LOG_COLUMNS,
         MASTER_CHECKLIST,
         PREREQUISITES,
+        RELEASE_OPTIONS,
+        SELF_REVIEW_OPTIONS,
+        SEVERITY_OPTIONS,
+        STATUS_OPTIONS,
         SUMMARY_META,
     )
 
@@ -258,12 +294,11 @@ def write_reference_checklist(
 
     # ---- Sheet 1: Summary ----
     ws = wb.create_sheet("Summary")
-    ws.cell(row=2, column=3, value="EuroNCAP Scenario Review Checklist").font = Font(bold=True, size=12)
     for i, (label, value) in enumerate(SUMMARY_META, start=4):
-        ws.cell(row=i, column=3, value=label).font = Font(bold=True)
+        ws.cell(row=i, column=3, value=label).fill = _REF_LABEL_FILL
         ws.cell(row=i, column=4, value=value)
-    ws.column_dimensions["C"].width = 20
-    ws.column_dimensions["D"].width = 60
+    ws.column_dimensions["C"].width = 16.85546875
+    ws.column_dimensions["D"].width = 62.0
 
     # ---- Sheet 2: ChecklistFinal ----
     ws = wb.create_sheet("ChecklistFinal")
@@ -275,56 +310,125 @@ def write_reference_checklist(
         "Date": stats.run_timestamp,
     }
     for i, label in enumerate(CHECKLIST_HEADER_LABELS, start=2):
-        ws.cell(row=i, column=3, value=label).font = Font(bold=True)
+        ws.cell(row=i, column=3, value=label).fill = _REF_LABEL_FILL
         ws.cell(row=i, column=4, value=header_values.get(label, ""))
 
+    # -- Main checklist table (the reference six columns) --
     table_header_row = 8
-    _header_row(ws, table_header_row, CHECKLIST_COLUMNS, start_col=2)
+    for col_off, text in enumerate(CHECKLIST_COLUMNS):
+        cell = ws.cell(row=table_header_row, column=2 + col_off, value=text)
+        cell.fill = _REF_HEADER_FILL
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = _BORDER_ALL
 
-    row = table_header_row + 1
-    last_cat = None
+    first_data_row = table_header_row + 1
+    row = first_data_row
+    cat_spans: list[tuple[str, int, int]] = []
+    cat_start = first_data_row
+    last_cat: str | None = None
     for cat, cid, ref_text in MASTER_CHECKLIST:
         result = by_id.get(cid)
         if cat != last_cat:
-            ws.cell(row=row, column=2, value=cat).font = Font(bold=True)
+            if last_cat is not None:
+                cat_spans.append((last_cat, cat_start, row - 1))
             last_cat = cat
-        ws.cell(row=row, column=3, value=cid)
-        text = result.description if result else ref_text
-        ws.cell(row=row, column=4, value=text).alignment = Alignment(wrap_text=True)
-
-        verdict = result.result if result else "Manual"
-        sc = ws.cell(row=row, column=5, value=verdict)
-        sc.fill = _STATUS_FILL.get(verdict, PatternFill("solid", fgColor=_GREY))
-        sc.font = _STATUS_FONT.get(verdict, Font())
-        sc.alignment = Alignment(horizontal="center")
-        # columns 6 (Review1) and 7 (Review2) left blank for human reviewers
-
-        level, why = (result.automation_level, result.automation_note) if result else automation_for(cid)
-        al = ws.cell(row=row, column=8, value=level)
-        al.fill = _AUTOMATION_FILL.get(level, PatternFill("solid", fgColor=_GREY))
-        al.alignment = Alignment(horizontal="center", wrap_text=True)
-        ws.cell(row=row, column=9, value=why).alignment = Alignment(wrap_text=True)
+            cat_start = row
+        cid_cell = ws.cell(row=row, column=3, value=cid)
+        cid_cell.alignment = Alignment(horizontal="center", vertical="center")
+        cid_cell.border = _BORDER_ALL
+        d = ws.cell(row=row, column=4, value=result.description if result else ref_text)
+        d.alignment = Alignment(wrap_text=True, vertical="center")
+        d.border = _BORDER_ALL
+        # Self Review = our verdict, shown as text with no fill (like the reviewer file).
+        sr = ws.cell(row=row, column=5, value=result.result if result else "Manual")
+        sr.alignment = Alignment(horizontal="center", vertical="center")
+        sr.border = _BORDER_ALL
+        # Review1 / Review2 left blank for human reviewers (bordered).
+        ws.cell(row=row, column=6).border = _BORDER_ALL
+        ws.cell(row=row, column=7).border = _BORDER_ALL
         row += 1
+    if last_cat is not None:
+        cat_spans.append((last_cat, cat_start, row - 1))
+    last_data_row = row - 1
 
-    # Config-driven (config.checklist_column_widths), falling back to the default for any
-    # column the team's config omits.
-    default_checklist_widths = {2: 16, 3: 18, 4: 72, 5: 12, 6: 14, 7: 14, 8: 20, 9: 50}
-    checklist_widths = {**default_checklist_widths, **stats.checklist_column_widths}
+    # Category column: one white merged cell per category, like the reference.
+    for cat, start, end in cat_spans:
+        for rr in range(start, end + 1):
+            cc = ws.cell(row=rr, column=2)
+            cc.fill = _REF_CATEGORY_FILL
+            cc.border = _BORDER_ALL
+        head = ws.cell(row=start, column=2, value=cat)
+        head.alignment = Alignment(horizontal="center", vertical="center")
+        if end > start:
+            ws.merge_cells(start_row=start, start_column=2, end_row=end, end_column=2)
+
+    # Dropdowns: Yes/No on the human review columns, Release on the metadata cell.
+    yn = DataValidation(type="list", formula1=f'"{SELF_REVIEW_OPTIONS}"', allow_blank=True)
+    ws.add_data_validation(yn)
+    yn.add(f"F{first_data_row}:G{last_data_row}")
+    rel = DataValidation(type="list", formula1=f'"{RELEASE_OPTIONS}"', allow_blank=True)
+    ws.add_data_validation(rel)
+    rel.add("D2")
+
+    # Column widths - reference values, still overridable per column from config.
+    checklist_widths = {**_REF_CHECKLIST_WIDTHS, **stats.checklist_column_widths}
     for col, width in checklist_widths.items():
         ws.column_dimensions[get_column_letter(col)].width = width
-    ws.row_dimensions[table_header_row].height = 28
-    ws.freeze_panes = f"A{table_header_row + 1}"
-    _auto_row_heights(ws, data_start_row=table_header_row + 1, col_char_widths=checklist_widths)
+    _auto_row_heights(ws, data_start_row=first_data_row, col_char_widths=checklist_widths)
+
+    # -- Issues Log table (filled from the run: one row per FAIL or MANUAL check) --
+    issues = [r for r in results if r.result in ("No", "Manual")]
+    issues_header_row = last_data_row + 3
+    for col_off, text in enumerate(ISSUES_LOG_COLUMNS):
+        cell = ws.cell(row=issues_header_row, column=2 + col_off, value=text)
+        cell.fill = _REF_LABEL_FILL
+        cell.border = _BORDER_ALL
+        cell.alignment = Alignment(
+            horizontal="center", vertical="center", wrap_text=(text == "SelfReview Comment")
+        )
+    ws.row_dimensions[issues_header_row].height = 28.9
+
+    # Keep a few empty template rows even with no issues, so it still reads as a table.
+    n_rows = max(len(issues), 5)
+    for idx in range(n_rows):
+        rr = issues_header_row + 1 + idx
+        for col in range(2, 9):
+            ws.cell(row=rr, column=col).border = _BORDER_ALL
+        if idx < len(issues):
+            r = issues[idx]
+            ws.cell(row=rr, column=2, value=idx + 1).alignment = Alignment(
+                horizontal="center", vertical="center"
+            )
+            ws.cell(row=rr, column=4, value=_issue_details(r)).alignment = Alignment(
+                wrap_text=True, vertical="center"
+            )
+    last_issue_row = issues_header_row + n_rows
+
+    sev = DataValidation(type="list", formula1=f'"{SEVERITY_OPTIONS}"', allow_blank=True)
+    ws.add_data_validation(sev)
+    sev.add(f"C{issues_header_row + 1}:C{last_issue_row}")
+    stat = DataValidation(type="list", formula1=f'"{STATUS_OPTIONS}"', allow_blank=True)
+    ws.add_data_validation(stat)
+    stat.add(f"E{issues_header_row + 1}:E{last_issue_row}")
+    _auto_row_heights(ws, data_start_row=issues_header_row + 1, col_char_widths=checklist_widths)
 
     # ---- Sheet 3: Prequisites ----
     ws = wb.create_sheet("Prequisites")
-    _header_row(ws, 2, ["SL.NO", "Rules"], start_col=1)
+    for col, (text, horiz) in enumerate([("SL.NO", "center"), ("Rules", "left")], start=1):
+        cell = ws.cell(row=2, column=col, value=text)
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal=horiz, vertical="center")
     for i, rule in enumerate(PREREQUISITES, start=1):
-        ws.cell(row=2 + i, column=1, value=i)
-        ws.cell(row=2 + i, column=2, value=rule).alignment = Alignment(wrap_text=True)
-    ws.column_dimensions["A"].width = 8
-    ws.column_dimensions["B"].width = 100
-    _auto_row_heights(ws, data_start_row=3, col_char_widths={1: 8, 2: 100})
+        ws.cell(row=2 + i, column=1, value=i).alignment = Alignment(
+            horizontal="center", vertical="top"
+        )
+        ws.cell(row=2 + i, column=2, value=rule).alignment = Alignment(
+            wrap_text=True, vertical="top"
+        )
+    ws.column_dimensions["A"].width = 5.7109375
+    ws.column_dimensions["B"].width = 95.7109375
+    _auto_row_heights(ws, data_start_row=3, col_char_widths={1: 6, 2: 96})
 
     wb.save(output_path)
     log.info("Reference checklist written to %s", output_path)

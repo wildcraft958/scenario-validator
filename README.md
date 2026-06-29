@@ -102,12 +102,16 @@ The **automatable pass rate** counts only PASS/FAIL checks (it excludes NA and M
 
 ### Reviewer checklist export (`--checklist`)
 
-Pass `--checklist` to also write `Review_Checklist_<scenario>_<timestamp>.xlsx`, a workbook
-that matches the team's review format (Summary / ChecklistFinal / Prequisites). Our verdict
-fills the Self Review column, Review1/Review2 stay blank for human reviewers, and the
-Automation Level travels along. Checkpoints the validator does not automate (MD_06-11,
-FB_02) appear as Manual rows with the reviewer wording. Tune the ChecklistFinal column
-widths in `config.json` (`checklist_column_widths`) without touching code.
+Pass `--checklist` to also write `Review_Checklist_<scenario>_<timestamp>.xlsx`, a replica
+of the team's review workbook (Summary / ChecklistFinal / Prequisites) - same sheets, column
+layout and colours - so it drops straight into the existing review flow. Our verdict fills
+the Self Review column (as text, like the reviewer file) and Review1/Review2 stay blank for
+human reviewers. The ChecklistFinal **Issues Log** table is filled from the run: one row per
+failed or manual check, with Sr No and Details populated and the Severity / Status dropdowns
+left for the reviewer to triage. Checkpoints the validator does not automate (MD_06-11, FB_02)
+appear as Manual rows with the reviewer wording. The automation trust level is not shown here
+- it stays in the native Validation report. Tune the ChecklistFinal column widths in
+`config.json` (`checklist_column_widths`) without touching code.
 
 ### Batch a whole corpus
 

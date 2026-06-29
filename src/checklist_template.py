@@ -1,10 +1,12 @@
 """Static content for the reviewer-checklist export (Review_Checklist_*.xlsx).
 
 The team reviews scenarios against an Excel checklist with three sheets - Summary,
-ChecklistFinal and Prequisites. The `--checklist` export reproduces that exact
-layout so an automated run drops straight into the existing review flow: our verdict
-fills the Self Review column, Review1/Review2 stay blank for human reviewers, and two
-extra columns carry the automation trust level.
+ChecklistFinal and Prequisites. The `--checklist` export reproduces that exact layout
+(same sheets, columns and colours) so an automated run is an exact replica of the
+reviewer file and drops straight into the existing review flow: our verdict fills the
+Self Review column and Review1/Review2 stay blank for human reviewers. The Issues Log
+table on ChecklistFinal is filled from the run (one row per failed or manual check).
+The automation trust level is NOT shown here - it ships in the native Validation report.
 
 MASTER_CHECKLIST is the ordered checkpoint list from the reference workbook, with two
 deliberate edits agreed with the team:
@@ -31,7 +33,8 @@ SUMMARY_META = [
 # for the team to fill; Protocol Name / Date are filled from the run at write time.
 CHECKLIST_HEADER_LABELS = ["Release", "Protocol Name", "Responsible", "Reviewer", "Date"]
 
-# ChecklistFinal table headers (the reference six, plus our two automation columns).
+# ChecklistFinal main table headers - exactly the reference six (no automation columns,
+# so the file is a true replica of the reviewer checklist).
 CHECKLIST_COLUMNS = [
     "Category",
     "CheckPoint Number",
@@ -39,9 +42,26 @@ CHECKLIST_COLUMNS = [
     "Self Review",
     "Review1",
     "Review2",
-    "Automation Level",
-    "Automation - why",
 ]
+
+# Issues Log table headers, verbatim from the reference (the trailing space on "Sr No "
+# is intentional - it matches the reviewer file).
+ISSUES_LOG_COLUMNS = [
+    "Sr No ",
+    "Severity",
+    "Details",
+    "Status",
+    "SelfReview Comment",
+    "R1 Comment",
+    "R2 Comment",
+]
+
+# Dropdown lists for the reviewer-facing controls (generic workflow options, cleaned of
+# the reference file's typos). These are inputs a reviewer picks, not values we compute.
+SELF_REVIEW_OPTIONS = "Yes,No"
+RELEASE_OPTIONS = "PriorityA,PriorityB,PriorityD"
+SEVERITY_OPTIONS = "Major,Minor,Documentation"
+STATUS_OPTIONS = "Accepted,Rejected"
 
 # Ordered (category, check_id, reference_text). Category repeats per row; the writer
 # renders it only when it changes, like the reference. NM_04-06 are our additions.

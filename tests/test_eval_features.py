@@ -99,7 +99,10 @@ class TestReferenceChecklistExport:
         from src.reporter import write_reference_checklist
         results = [
             CheckResult(check_id="CH_NM_01", category="Naming", description="naming", status="PASS"),
-            CheckResult(check_id="CH_MD_03", category="ModelDesk", description="routes", status="FAIL"),
+            CheckResult(check_id="CH_MD_03", category="ModelDesk", description="routes", status="FAIL",
+                        comment="only 1 road in the route"),
+            CheckResult(check_id="CH_SC_16", category="Scenario", description="impact",
+                        status="MANUAL_REVIEW", comment="impact % needs HIL confirmation"),
         ]
         stats = SummaryStats.from_results(results, "scn", "2026-01-01 00:00:00", "proto")
         out = tmp_path / "Review_Checklist.xlsx"
@@ -110,17 +113,31 @@ class TestReferenceChecklistExport:
         wb = self._build(tmp_path)
         assert wb.sheetnames == ["Summary", "ChecklistFinal", "Prequisites"]
 
+    def test_columns_are_the_reference_six(self):
+        # The replica drops our automation columns - it carries only the reviewer's six.
+        from src.checklist_template import CHECKLIST_COLUMNS, ISSUES_LOG_COLUMNS
+        assert CHECKLIST_COLUMNS == [
+            "Category", "CheckPoint Number", "Check Points", "Self Review", "Review1", "Review2",
+        ]
+        assert ISSUES_LOG_COLUMNS == [
+            "Sr No ", "Severity", "Details", "Status",
+            "SelfReview Comment", "R1 Comment", "R2 Comment",
+        ]
+
     def test_table_header_and_verdicts(self, tmp_path):
         wb = self._build(tmp_path)
         ws = wb["ChecklistFinal"]
-        assert ws.cell(row=8, column=2).value == "Category"
-        assert ws.cell(row=8, column=5).value == "Self Review"
-        assert ws.cell(row=8, column=8).value == "Automation Level"
+        headers = [ws.cell(row=8, column=c).value for c in range(2, 8)]
+        assert headers == [
+            "Category", "CheckPoint Number", "Check Points", "Self Review", "Review1", "Review2",
+        ]
+        # no automation columns in the replica (column H on the header row is empty)
+        assert ws.cell(row=8, column=8).value is None
 
         verdict = {}
         for r in range(9, ws.max_row + 1):
             cid = ws.cell(row=r, column=3).value
-            if cid:
+            if cid and str(cid).startswith("CH_"):
                 verdict[cid] = ws.cell(row=r, column=5).value
         # full reference list (NM 6 + RD 6 + SC 22 + MD 11 + MR 2 + FB 2)
         assert len(verdict) == 49
@@ -130,6 +147,34 @@ class TestReferenceChecklistExport:
         # a reference-only check we do not compute exports as Manual
         assert verdict["CH_MD_07"] == "Manual"
         assert verdict["CH_FB_02"] == "Manual"
+
+    def test_no_frozen_panes_opens_at_top(self, tmp_path):
+        # The reviewer file has no frozen panes; matching it also removes the scroll/
+        # duplicate-header artifact (the saved view opens at the top of every sheet).
+        wb = self._build(tmp_path)
+        for name in wb.sheetnames:
+            assert wb[name].freeze_panes in (None, "A1"), name
+
+    def test_issues_log_filled_from_results(self, tmp_path):
+        wb = self._build(tmp_path)
+        ws = wb["ChecklistFinal"]
+        hdr = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 2).value == "Sr No ")
+        assert [ws.cell(hdr, c).value for c in range(2, 9)] == [
+            "Sr No ", "Severity", "Details", "Status",
+            "SelfReview Comment", "R1 Comment", "R2 Comment",
+        ]
+        details = {}
+        for r in range(hdr + 1, ws.max_row + 1):
+            sr_no, text = ws.cell(r, 2).value, ws.cell(r, 4).value
+            if sr_no and text:
+                details[sr_no] = text
+                # Severity (col 3) and Status (col 5) stay blank for the reviewer.
+                assert ws.cell(r, 3).value is None
+                assert ws.cell(r, 5).value is None
+        # one row per FAIL + MANUAL check (CH_MD_03 fail, CH_SC_16 manual)
+        assert len(details) == 2
+        joined = " ".join(details.values())
+        assert "CH_MD_03" in joined and "CH_SC_16" in joined
 
 
 # ---------------------------------------------------------------------------
