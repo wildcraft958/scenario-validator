@@ -971,7 +971,14 @@ def target_reference_offset(actor: str, motion: str, is_rear: bool) -> tuple[flo
 
 
 def _entity_bbox(xosc_root: Any, config: Config, name: str) -> tuple[float, float, float, float]:
-    """BoundingBox from the .xosc, falling back to config.vehicle_dimensions."""
+    """Bounding box (x, y, length, width) for an entity.
+
+    The .xosc BoundingBox is AUTHORITATIVE - every shipped scenario carries its own, so the
+    impact-% is always computed from each scene's real vehicle rig (the corpus mixes a 3.57 m
+    and a 4.7 m VUT across batches). config.vehicle_dimensions is only a generic fallback for a
+    hypothetical bbox-less export; it is not hit by any current sample, so its exact values do
+    not drive a verdict (do not "sync" them to one batch's .xosc).
+    """
     bbox = xosc.get_entity_bbox(xosc_root, name)
     if bbox is not None:
         return bbox

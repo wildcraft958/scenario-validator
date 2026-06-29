@@ -276,6 +276,9 @@ class Config(BaseModel):
     # for a site that pins exact names; remove both field and read sites if that never lands.
     required_standalone_files: list[str] = []
     vut_entity_names: list[str]
+    # Generic fallback dimensions, used ONLY when an entity has no .xosc BoundingBox. The
+    # .xosc bbox is authoritative and present in every shipped scenario, so these values do
+    # not drive any current verdict (see _entity_bbox in checks/scenario.py).
     vehicle_dimensions: dict[str, VehicleDimensions]
     naming_convention: dict
     scenarios: dict[str, ScenarioProtocol]
