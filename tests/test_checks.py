@@ -1180,7 +1180,7 @@ class TestConfig:
     def test_scenario_protocol_lookup(self, config):
         proto = config.scenario_protocol("CCRs")
         assert proto is not None
-        assert proto.type == "longitudinal"
+        assert proto.impact_tolerance_class == "longitudinal"
 
     def test_vut_dims(self, config):
         dims = config.vut_dims()

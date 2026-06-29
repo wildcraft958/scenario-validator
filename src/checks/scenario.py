@@ -1201,7 +1201,7 @@ def check_sc_16(
     tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
     proto = config.scenario_protocol(tag) if tag else None
 
-    if not proto or proto.type not in ("crossing",):
+    if not proto or proto.impact_tolerance_class not in ("crossing",):
         return _make("CH_SC_16", "NA", "Not a turning/crossing scenario")
 
     # The per-instance designed overlap comes from the scenario filename (e.g. 50Imp);
@@ -1230,7 +1230,7 @@ def check_sc_17(
     tag = scenario_tag or _detect_scenario_tag(xosc_root, config)
     proto = config.scenario_protocol(tag) if tag else None
 
-    if not proto or proto.type not in ("longitudinal", "head-on"):
+    if not proto or proto.impact_tolerance_class not in ("longitudinal", "head-on"):
         return _make("CH_SC_17", "NA", "Not a longitudinal/head-on scenario")
 
     # Per-instance designed overlap from the filename (e.g. 50Imp); fall back to protocol.

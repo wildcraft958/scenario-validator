@@ -70,7 +70,7 @@ name prefix - nothing else to update.
 | Column | Meaning |
 |---|---|
 | `tag` | Scenario family name as it appears in filenames (`CCFhol`, `CPTA`, `CPNA-50` …) |
-| `type` | `longitudinal` (CH_SC_17 applies), `crossing` (CH_SC_16 applies), or `head-on` |
+| `impact_tolerance_class` | Impact-tolerance routing (NOT the EuroNCAP Scenario-Type taxonomy): `longitudinal` (CH_SC_17 applies), `crossing` (CH_SC_16 applies), or `head-on`. The legacy column name `type` is still accepted |
 | `vut_min_kmh` / `vut_max_kmh` | Allowed VUT speed range per protocol (CH_SC_18). Leave blank if unknown |
 | `target_speed_kmh` | Protocol target speed, if fixed |
 | `impact_overlap_pct` | The designed impact percentage (the `NNImp` in the filename) - used by the geometric impact estimate in CH_SC_16/17 |

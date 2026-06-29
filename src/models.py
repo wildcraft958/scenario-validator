@@ -5,7 +5,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from .automation import automation_for
 
@@ -73,7 +81,7 @@ def _read_excel_config(path: Path) -> dict:
         if row[0] is None:
             continue
         tag, typ, vmin, vmax, side_impact, has_sov = (list(row) + [None] * 6)[:6]
-        entry: dict = {"type": str(typ).strip()}
+        entry: dict = {"impact_tolerance_class": str(typ).strip()}
         if vmin is not None and vmax is not None:
             entry["vut_speed_range_kmh"] = [vmin, vmax]
         if side_impact in _truthy:
@@ -236,11 +244,19 @@ class SimTimeThreshold(BaseModel):
 
 
 class ScenarioProtocol(BaseModel):
-    # INTERNAL impact-tolerance routing key, NOT the EuroNCAP Scenario-Type taxonomy
-    # (Longitudinal/Turning/Crossing). It only routes the impact check: 'crossing' ->
-    # CH_SC_16 (±5%); 'longitudinal'/'head-on' -> CH_SC_17 (±1%). The impact AXIS
-    # (width vs length) is the separate side_impact flag, not this field.
-    type: Literal["longitudinal", "crossing", "head-on"] = "longitudinal"
+    # Accept the field name and the legacy "type" config key (renamed from "type" so it is
+    # not mistaken for the EuroNCAP "Scenario Type" taxonomy).
+    model_config = ConfigDict(populate_by_name=True)
+
+    # INTERNAL impact-tolerance routing class, NOT the EuroNCAP "Scenario Type" taxonomy
+    # (where Turning and Crossing are separate). It only routes the impact TOLERANCE:
+    # 'crossing' -> CH_SC_16 (+/-5%); 'longitudinal'/'head-on' -> CH_SC_17 (+/-1%). The
+    # impact AXIS (width vs length) is the separate side_impact flag, not this field. The
+    # old config key "type" is still accepted via the alias.
+    impact_tolerance_class: Literal["longitudinal", "crossing", "head-on"] = Field(
+        default="longitudinal",
+        validation_alias=AliasChoices("impact_tolerance_class", "type"),
+    )
     vut_speed_range_kmh: list[float] | None = None
     # Per-instance designed overlap comes from the scenario FILENAME (the Imp token);
     # this is only a fallback used by CH_SC_16/17 when the filename cannot be parsed.

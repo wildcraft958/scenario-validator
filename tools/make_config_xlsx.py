@@ -149,7 +149,7 @@ def build_workbook(raw: dict) -> Workbook:
 
     # ---- Scenarios ----
     ws = wb.create_sheet("Scenarios")
-    ws.append(["tag", "type", "vut_min_kmh", "vut_max_kmh", "side_impact", "has_sov"])
+    ws.append(["tag", "impact_tolerance_class", "vut_min_kmh", "vut_max_kmh", "side_impact", "has_sov"])
     _style_header(ws, 6)
     _autosize(ws, [12, 14, 12, 12, 12, 9])
     dv_type = DataValidation(type="list", formula1='"longitudinal,crossing,head-on"', allow_blank=False)
@@ -157,7 +157,7 @@ def build_workbook(raw: dict) -> Workbook:
     for tag, proto in raw.get("scenarios", {}).items():
         speed = proto.get("vut_speed_range_kmh") or [None, None]
         ws.append([
-            tag, proto.get("type", "longitudinal"), speed[0], speed[1],
+            tag, proto.get("impact_tolerance_class") or proto.get("type") or "longitudinal", speed[0], speed[1],
             bool(proto.get("side_impact", False)), bool(proto.get("has_sov", False)),
         ])
         dv_type.add(ws.cell(row=ws.max_row, column=2))
