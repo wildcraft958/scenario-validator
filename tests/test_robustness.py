@@ -621,7 +621,7 @@ class TestSC10JunctionWaypoints:
         from src.checks.scenario import check_sc_10
         from lxml import etree
         xodr_root = etree.parse(str(EXAMPLES / "CCFtap" / "AEB_CCFtap_20VUT_45GVT_50Imp.xodr"), _PARSER).getroot()
-        result = check_sc_10(_load(CCFTAP_XOSC), xodr_root, config, scenario_tag="CCFtap")
+        result = check_sc_10(_load(CCFTAP_XOSC), xodr_root, config)
         assert result.status in {"PASS", "FAIL"}
         assert "non-intersection" not in result.comment.lower()
         assert "junction" in result.comment.lower()
@@ -632,20 +632,20 @@ class TestSC10JunctionWaypoints:
         from src.checks.scenario import check_sc_10
         from lxml import etree
         xodr_root = etree.parse(str(EXAMPLES / "CCFtap" / "AEB_CCFtap_20VUT_45GVT_50Imp.xodr"), _PARSER).getroot()
-        # scenario_tag=None and not configured -> only the geometry heuristic can detect it
-        result = check_sc_10(_load(CCFTAP_XOSC), xodr_root, config, scenario_tag="ZZUNLISTED")
+        # SC_10 is purely geometry-driven (no scenario tag) - only the .xodr heuristic detects it
+        result = check_sc_10(_load(CCFTAP_XOSC), xodr_root, config)
         assert "non-intersection" not in result.comment.lower()
 
     def test_cpnco_junction_coverage_passes(self, config):
         """CPNCO is a real junction scenario - trajectory passes through junction → PASS."""
         from src.checks.scenario import check_sc_10
-        result = check_sc_10(_load(CPNCO_XOSC), _load(CPNCO_XODR), config, scenario_tag="CPNCO")
+        result = check_sc_10(_load(CPNCO_XOSC), _load(CPNCO_XODR), config)
         assert result.status == "PASS"
 
     def test_cpta_junction_coverage_passes(self, config):
         """CPTA is a junction turning scenario - trajectory must have junction coverage."""
         from src.checks.scenario import check_sc_10
-        result = check_sc_10(_load(CPTA_XOSC), _load(CPTA_XODR), config, scenario_tag="CPTA")
+        result = check_sc_10(_load(CPTA_XOSC), _load(CPTA_XODR), config)
         assert result.status == "PASS"
 
 

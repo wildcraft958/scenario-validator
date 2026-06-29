@@ -5,10 +5,12 @@ Usage:
     python validator.py <scenario_dir> [options]
 
 Options:
-    --config PATH      Path to config.json  [default: config.json next to this script]
+    --config PATH      Path to config.json or config.xlsx  [default: config.json next to this script]
     --output DIR       Directory to write reports  [default: <scenario_dir>]
     --no-rd            Skip .rd Model Desk checks (if .rd file is missing)
     --quiet            Suppress console output (still logs to file)
+    --checklist        Also write a reviewer-checklist workbook (Review_Checklist_*.xlsx)
+    --check-config     Validate the config, print the effective settings, and exit
 """
 from __future__ import annotations
 

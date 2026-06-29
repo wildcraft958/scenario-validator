@@ -11,6 +11,14 @@ from .naming import detect_scenario_tag
 
 CATEGORY = "Scenario"
 
+# Narrow VRU target types (motorcycle/cyclist/pedestrian): in a turning/crossing impact they
+# cover only a thin band of the VUT width, so the impact location slides across the width within
+# the sync window and cannot be pinned at design time (HIL tunes it). CH_SC_16/17 downgrade an
+# off-design estimate for these to MANUAL_REVIEW, not FAIL. Defined once so the two impact checks
+# stay in lock-step. Mirrors config.stationary_target_name_patterns but governs impact tolerance,
+# not stationary detection.
+VRU_ACTOR_TYPES = ("EPTa", "EPTc", "EBTa", "EMT")
+
 _DESCRIPTIONS = {
     "CH_SC_01": "All EuroNCAP scenario variations covered - ParameterDeclarations present",
     "CH_SC_02": "VUT Init positions (x,y) present in scenario (value correctness requires manual check)",
@@ -413,7 +421,8 @@ def check_sc_07(xosc_root: Any, config: Config) -> CheckResult:
 
 
 def check_sc_08(xosc_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
-    """Scenario satisfies applicable protocol requirements.
+    """Scenario satisfies applicable protocol requirements. Always returns MANUAL_REVIEW - a
+    reviewer reference item, not an automated pass/fail gate.
 
     This is the catch-all "did we meet the protocol" item. Rather than a blind "go read the
     protocol", it reports the concrete, scenario-specific facts the tool already knows (the
@@ -497,7 +506,7 @@ def check_sc_09(xosc_root: Any, config: Config) -> CheckResult:
     )
 
 
-def check_sc_10(xosc_root: Any, xodr_root: Any, config: Config, scenario_tag: str | None = None) -> CheckResult:
+def check_sc_10(xosc_root: Any, xodr_root: Any, config: Config) -> CheckResult:
     """Trajectory must not start/end at intersection; crossing scenarios need >=1 junction waypoint.
 
     Protocol SL.1 has two requirements:
@@ -742,7 +751,12 @@ def check_sc_14(xosc_root: Any, config: Config) -> CheckResult:
             if e != vut and any(e.upper().startswith(p) for p in patterns_upper)
         ]
     else:
-        name_matched = [e for e in entities if e != vut]
+        # No name patterns configured: do NOT treat every non-VUT entity as a static target
+        # (that would zero-speed-check moving actors and false-FAIL them). Fall back to the
+        # data-driven explicit_static detector below, which only flags entities the .xosc
+        # itself shows are static (init_spd=0 and no trajectory). Mirrors SC_15's empty-pattern
+        # behaviour so the two checks degrade consistently.
+        name_matched = []
 
     # Also catch entities that have explicit init_spd=0 and no trajectory but are not
     # name-matched (e.g. LargeObstructionVehicle, SmallObstructionVehicle). These are
@@ -789,6 +803,9 @@ def check_sc_15(xosc_root: Any, config: Config, parsed_name: Any = None) -> Chec
             if e != vut and any(e.upper().startswith(p) for p in patterns_upper)
         ]
     else:
+        # Stationary EuroNCAP targets (EMT/EPTa/EPTc/EBTa) are identified by name only - there is
+        # no data-only signal to fall back on - so an unconfigured pattern list yields no
+        # candidates (NA), never a match-all that would false-FAIL moving actors.
         emt_candidates = []
 
     if not emt_candidates:
@@ -1088,7 +1105,7 @@ def _impact_verdict(
     vru_note = (
         " Narrow VRU target in a turning impact, so the impact location cannot be pinned at "
         "design time; HIL confirms."
-        if actor in ("EPTa", "EPTc", "EBTa", "EMT") and motion in ("turning", "crossing")
+        if actor in VRU_ACTOR_TYPES and motion in ("turning", "crossing")
         else ""
     )
     # Uncertainty-aware verdict (derived from geometry, not the scenario name). The estimate
@@ -1098,7 +1115,7 @@ def _impact_verdict(
     # §1.2.5.2 - so we can neither confirm nor reject it); FAIL only when the estimate is
     # confidently off (far from the design AND the geometry is stable).
     miss = abs(computed - expected)
-    narrow_vru_turn = actor in ("EPTa", "EPTc", "EBTa", "EMT") and motion in ("turning", "crossing")
+    narrow_vru_turn = actor in VRU_ACTOR_TYPES and motion in ("turning", "crossing")
     if miss <= tolerance:
         return _make(
             check_id, "PASS",
@@ -1696,7 +1713,7 @@ def run_all(
         check_sc_07(xosc_root, config),
         check_sc_08(xosc_root, config, scenario_tag=scenario_tag),
         check_sc_09(xosc_root, config),
-        check_sc_10(xosc_root, xodr_root, config, scenario_tag=scenario_tag),
+        check_sc_10(xosc_root, xodr_root, config),
         check_sc_11(xosc_root, config),
         check_sc_12(xosc_root, config),
         check_sc_13(xosc_root, config),

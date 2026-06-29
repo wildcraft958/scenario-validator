@@ -9,7 +9,9 @@ The validator accepts either file directly:
 
 Sheets produced (the loader in src/models.py reads exactly this layout):
     Protocol Constants  - EuroNCAP values. DO NOT EDIT unless the protocol changes.
-    Site Settings       - entity names, file lists, tolerances. Edit freely.
+    Site Settings       - entity names, file lists, tunable tolerances. Edit freely.
+                          (A few protocol-fixed offsets stay code-only by design - the
+                          round-trip self-test lists them in _SHEET_OR_CODE_ONLY.)
     Scenarios           - one row per scenario family. Add rows for new scenarios.
     Vehicle Dimensions  - bounding-box fallbacks used when the .xosc has none.
     Curve Radii         - protocol Part 2 turn radii (EuroNCAP Table 1.2.4).
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -78,6 +81,9 @@ _KEY_SHEET = {
     "curvature_min_heading_delta_rad": ("Site Settings", "Minimum per-vertex heading change to count as turning (CH_SC_07)."),
     "curvature_min_segment_length_m": ("Site Settings", "Minimum segment length used in turn-radius estimation (CH_SC_07)."),
     "curve_radius_tolerance_pct": ("Site Settings", "Allowed deviation from the protocol Part 2 turn radius (CH_SC_07)."),
+    "junction_lane_width_min_m": ("Site Settings", "Minimum junction side/connecting-lane width (m); RD_01 grades connecting lanes against [this, lane_width_m]."),
+    "impact_rotation_sensitivity_pct": ("Site Settings", "CH_SC_16/17: impact-% swing across the sync window above which the rotation-robust overlap-centre metric is used."),
+    "speed_range_tolerance_kmh": ("Site Settings", "CH_SC_18: km/h tolerance on the protocol speed range when speed is measured (no filename token)."),
 }
 
 _HEADER_FILL = PatternFill("solid", fgColor="305496")
@@ -194,18 +200,48 @@ def main() -> int:
         raw.pop(key)
 
     wb = build_workbook(raw)
-    wb.save(args.out)
-    print(f"Wrote {args.out}")
 
-    # Round-trip sanity check: both files must produce the identical Config.
     sys.path.insert(0, str(_ROOT))
     from src.models import Config
+
+    # Coverage: every Config field must be reachable from the workbook - via a key/value
+    # row (_KEY_SHEET) or a dedicated sheet - else an Excel-only edit silently runs the
+    # model default. _SHEET_OR_CODE_ONLY are the fields deliberately not in _KEY_SHEET:
+    # those carried by a dedicated sheet, plus fixed protocol maps / JSON-only layout that
+    # are tuned in code, not per-site. A new Config field that is neither fails loudly here.
+    _SHEET_OR_CODE_ONLY = {
+        "scenarios", "vehicle_dimensions", "curve_part2_radii_m", "simulation_time_by_speed_s",
+        "naming_convention",        # derived from extra_scenario_prefixes + scenarios
+        "target_type_to_category",  # fixed EuroNCAP token->category map (model default)
+        "checklist_column_widths",  # JSON-only reviewer-checklist layout (not in the xlsx)
+        # Obstruction / road-origin offsets are fixed code-level protocol constants
+        # (EuroNCAP Frontal v1.1 3.2.3 / RD_04 origin rule), intentionally not per-site.
+        "road_origin_tolerance_m", "obstruction_gap_m", "obstruction_offset_nearside_m",
+        "obstruction_offset_farside_m", "obstruction_layout_tolerance_m",
+    }
+    uncovered = [
+        name for name in Config.model_fields
+        if name not in _KEY_SHEET and name not in _SHEET_OR_CODE_ONLY
+    ]
+    if uncovered:
+        print(
+            "ERROR: these Config fields are written to no sheet, so an Excel-only user would "
+            f"silently get the model default: {', '.join(sorted(uncovered))}. Add each to "
+            "_KEY_SHEET (with a config.json value) or list it in _SHEET_OR_CODE_ONLY.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Round-trip BEFORE overwriting the live file: save to a temp path, confirm both files
+    # produce the identical Config, and only then promote it - a failing run never leaves a
+    # half-correct config.xlsx on disk.
+    # Keep the .xlsx suffix so Config.load reads it as a workbook, not JSON.
+    tmp_out = Path(args.out).with_name(Path(args.out).stem + ".tmp.xlsx")
+    wb.save(tmp_out)
     a = Config.load(Path(args.json)).model_dump()
-    b = Config.load(Path(args.out)).model_dump()
-    # prefix ORDER is irrelevant (prefix matching) and the in-JSON 'description'
-    # doc note has no behavioural effect - normalise both before comparing.
-    # checklist_column_widths is a JSON-only report-layout setting (not surfaced in the
-    # Excel sheets), so it would always differ; drop it from the comparison.
+    b = Config.load(tmp_out).model_dump()
+    # prefix ORDER is irrelevant (prefix matching) and the in-JSON 'description' doc note
+    # has no behavioural effect; checklist_column_widths is JSON-only - normalise/drop both.
     for d in (a, b):
         d["naming_convention"] = sorted(d["naming_convention"].get("valid_prefixes", []))
         d.pop("checklist_column_widths", None)
@@ -214,7 +250,11 @@ def main() -> int:
             if a[field] != b[field]:
                 print(f"  MISMATCH in '{field}'", file=sys.stderr)
         print("ERROR: config.xlsx does not round-trip to the same Config as config.json", file=sys.stderr)
+        tmp_out.unlink(missing_ok=True)
         return 1
+
+    os.replace(tmp_out, args.out)
+    print(f"Wrote {args.out}")
     print("Round-trip check OK: config.xlsx loads identically to config.json")
     return 0
 
