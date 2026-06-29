@@ -57,6 +57,11 @@ These describe *your* workflow and naming conventions.
 
 In Excel, list values are one cell, comma-separated: `VUT, Ego, EgoVehicle, Vehicle`.
 
+The batch summary's **Confidence** buckets (`tools/batch_validate.py` -> `Summary_Stats_*.xlsx`)
+are deliberately *not* config: they are reporting thresholds, not protocol tolerances, so they
+live as the `CONF_HIGH` / `CONF_MED` constants in `src/rollup.py` to keep config to the values
+that change a verdict.
+
 ### 3. TUNING KNOBS - change only if validation is consistently too strict or too loose
 Tolerances and thresholds (`*_tolerance_*`, `*_threshold_*`, `speed_sanity_max_kmh`,
 `junction_waypoint_radius_m`, `curvature_min_*`). Defaults are sensible; note that

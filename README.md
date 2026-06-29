@@ -114,15 +114,45 @@ automation trust level is not shown here
 - it stays in the native Validation report. Tune the ChecklistFinal column widths in
 `config.json` (`checklist_column_widths`) without touching code.
 
-### Batch a whole corpus
+### Batch a whole tree (one command + root summary)
 
-`tools/run_eval.py` validates every scenario folder under a root and writes an aggregate
-markdown report (per-check pass rates, per-family summary, automation coverage). It never
-aborts on a single bad scenario and flags directories that are not full exports:
+Teams pack scenarios as nested batches (`<root>/<Batch>/<Category>/<scenario>/`). Hand the
+**root** folder to the batch runner; it finds every leaf scenario folder underneath (any depth),
+validates each, writes the per-folder reports in place, and produces one root-level
+`Summary_Stats_<root>_<timestamp>.xlsx` trust dashboard so a reviewer can triage the whole
+batch without opening each file. It never aborts on a single bad scenario - a crash becomes an
+`ERROR` row - and lists folders that are not full exports (`.rrscene`-only, no `.xosc`) on a
+**Skipped & Errors** sheet so nothing that was not validated can look like a pass.
+
+On Windows, run the PowerShell launcher (it locates Python for you):
+
+```powershell
+pwsh -File run_batch.ps1 -Root "D:\Scenarios\01_Batch 1"
+# options: -Config <path>  -Summary <path>  -NoChecklist  -NoReports  -Quiet  -Python <exe>
+```
+
+Cross-platform, call the Python runner directly:
 
 ```
-python tools/run_eval.py Eval_Data --output ./eval_reports --report ./eval_reports/report.md
+python tools/batch_validate.py "Eval_Data/01_Batch 1"
+  [--config PATH] [--summary PATH] [--no-checklist] [--no-reports] [--quiet]
 ```
+
+The **Summary** sheet has a top box (root, run time, discovered / validated / skipped / errored,
+Pass / Review counts, confidence spread) over one row per scenario:
+
+`S/No | Batch | Category | Scenario | Total | Automated | Passed | Failed | Manual | NA | Confidence | Verdict | Advice`
+
+- **Automated** = checks the tool decided itself (`Total - Manual`).
+- **Confidence** = how much of the decisive (pass/fail) verdict came from *fully*-automated checks
+  vs heuristic (*partially*-automated) ones - the lower it is, the more a false positive could hide.
+  Buckets High / Medium / Low (thresholds are constants in `src/rollup.py`, not config).
+- **Verdict** = `P` only when there are 0 failures **and** 0 manual checks, else `R` (`ERROR` on crash).
+- **Advice** names the checks to look at; a failure on a heuristic check is tagged
+  `(heuristic - confirm)` so the reviewer double-checks exactly where a false positive could hide.
+
+For corpus research (per-check pass rates, per-family summary, automation coverage in a single
+markdown file) use `tools/run_eval.py Eval_Data --report ./eval_reports/report.md` instead.
 
 ---
 
@@ -214,21 +244,25 @@ See `CONFIG_GUIDE.md` for what every key means and which are protocol constants 
 
 ```
 scenario_validator/
-├── validator.py              # Entry point - run this
+├── validator.py              # Entry point - validate one scenario folder
+├── run_batch.ps1             # Windows launcher: validate a whole tree + root summary
 ├── config.json               # EuroNCAP thresholds (edit here, not in code)
 ├── config.xlsx               # Same thresholds as a 6-sheet Excel workbook
 ├── tools/make_config_xlsx.py # Regenerate config.xlsx from config.json (round-trip checked)
-├── tools/run_eval.py         # Batch-validate a corpus and aggregate a markdown report
+├── tools/batch_validate.py   # Validate every scenario under a root + write the root summary
+├── tools/run_eval.py         # Corpus research aggregate (per-check/family markdown report)
 ├── tools/crosscheck_reviews.py # Compare verdicts against hand-filled _Review.xlsx (parity)
 ├── setup.sh / setup.bat      # Dependency installers
 ├── requirements.txt          # Loose version constraints
 ├── requirements-lock.txt     # Pinned versions for reproducible installs
 ├── src/
 │   ├── models.py             # Data models: CheckResult, SummaryStats, Config
+│   ├── discovery.py          # Find leaf scenario folders under a root (any depth)
+│   ├── rollup.py             # Per-scenario summary row: counts, confidence, verdict, advice
 │   ├── automation.py         # Per-check automation trust tier + reason
 │   ├── checklist_template.py # Static content for the --checklist reviewer export
 │   ├── geometry.py           # §1.2.5 impact-location estimator (per-actor reference point)
-│   ├── reporter.py           # Excel output (native report + reviewer checklist)
+│   ├── reporter.py           # Excel output (native report + reviewer checklist + batch summary)
 │   ├── parsers/
 │   │   ├── xosc.py           # OpenSCENARIO parser (secure lxml)
 │   │   ├── xodr.py           # OpenDRIVE parser (secure lxml)
