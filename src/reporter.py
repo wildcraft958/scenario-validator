@@ -17,6 +17,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.views import Selection
 
 from .models import CheckResult, SummaryStats
+from .rollup import BatchSummaryMeta, ScenarioRow
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +80,20 @@ _VALIDATION_HEADERS = [
 ]
 _ISSUE_HEADERS = ["Check ID", "Category", "Issue", "File", "Suggested fix"]
 _VALIDATION_COL_CHARS = {1: 16, 2: 16, 3: 52, 4: 10, 5: 60, 6: 22, 7: 20, 8: 20, 9: 50}
+
+# Root batch-summary (Design A: trust dashboard) - one row per scenario.
+_SUMMARY_HEADERS = [
+    "S/No", "Batch", "Category", "Scenario", "Total", "Automated", "Passed",
+    "Failed", "Manual", "NA", "Confidence", "Verdict", "Advice",
+]
+_SUMMARY_COL_WIDTHS = {
+    1: 6, 2: 16, 3: 18, 4: 46, 5: 8, 6: 11, 7: 9, 8: 8, 9: 9, 10: 6,
+    11: 12, 12: 9, 13: 64,
+}
+# Column numbers are derived from the header order so the writer never carries magic
+# indices: rename or reorder a header and the styling follows.
+_SUMMARY_COL = {name: i + 1 for i, name in enumerate(_SUMMARY_HEADERS)}
+_SUMMARY_LEFT_COLS = {_SUMMARY_COL[n] for n in ("Batch", "Category", "Scenario", "Advice")}
 
 
 def _header_row(ws, row: int, headers: list[str], start_col: int = 1) -> None:
@@ -432,6 +447,165 @@ def write_reference_checklist(
 
     wb.save(output_path)
     log.info("Reference checklist written to %s", output_path)
+    return output_path
+
+
+def _confidence_style(confidence: str) -> tuple[PatternFill, Font]:
+    if confidence == "High":
+        return PatternFill("solid", fgColor=_GREEN), Font(bold=True)
+    if confidence == "Medium":
+        return PatternFill("solid", fgColor=_YELLOW), Font(bold=True)
+    if confidence == "Low":
+        return PatternFill("solid", fgColor=_RED), Font(bold=True, color=_WHITE)
+    return PatternFill("solid", fgColor=_GREY), Font()
+
+
+def _verdict_style(row: ScenarioRow) -> tuple[PatternFill, Font]:
+    if row.verdict == "P":
+        return PatternFill("solid", fgColor=_GREEN), Font(bold=True)
+    if row.verdict == "ERROR":
+        return PatternFill("solid", fgColor=_GREY), Font(bold=True)
+    # R: red when a real failure is present, amber when it is manual-only.
+    if row.failed > 0:
+        return PatternFill("solid", fgColor=_RED), Font(bold=True, color=_WHITE)
+    return PatternFill("solid", fgColor=_YELLOW), Font(bold=True)
+
+
+def write_batch_summary(
+    rows: list[ScenarioRow],
+    meta: BatchSummaryMeta,
+    output_path: Path,
+) -> Path:
+    """Write the root-level trust dashboard: a top box of run-wide figures over a flat
+    one-row-per-scenario table (Design A), plus a Skipped & Errors sheet so nothing that
+    was not validated can be mistaken for a pass. Lets a reviewer triage a whole batch
+    without opening each file."""
+    wb = openpyxl.Workbook()
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
+
+    ws = wb.create_sheet("Summary")
+
+    # ---- Top box ----
+    title = ws.cell(row=1, column=1, value="EuroNCAP Batch Validation Summary")
+    title.font = Font(bold=True, size=14)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(_SUMMARY_HEADERS))
+
+    passes = sum(1 for s in rows if s.verdict == "P")
+    reviews = sum(1 for s in rows if s.verdict == "R")
+    high = sum(1 for s in rows if s.confidence == "High")
+    med = sum(1 for s in rows if s.confidence == "Medium")
+    low = sum(1 for s in rows if s.confidence == "Low")
+    box_rows: list[tuple[str, object]] = [
+        ("Root folder", meta.root),
+        ("Run timestamp", meta.run_timestamp),
+        ("Scenarios discovered", meta.discovered),
+        ("Validated", meta.validated),
+        ("Skipped (no .xosc)", meta.skipped),
+        ("Errored", meta.errored),
+        ("Pass (P)", passes),
+        ("Review (R)", reviews),
+        ("Checks/scenario (max)", meta.checks_per_scenario),
+        ("Confidence  High / Med / Low", f"{high} / {med} / {low}"),
+    ]
+    box_fill = PatternFill("solid", fgColor=_BLUE_HDR)
+    br = 2
+    for label, value in box_rows:
+        lcell = ws.cell(row=br, column=1, value=label)
+        lcell.fill = box_fill
+        lcell.font = Font(bold=True, color=_WHITE)
+        lcell.alignment = Alignment(horizontal="left", vertical="center")
+        ws.merge_cells(start_row=br, start_column=1, end_row=br, end_column=3)
+        vcell = ws.cell(row=br, column=4, value=value)
+        vcell.alignment = Alignment(horizontal="left", vertical="center")
+        ws.merge_cells(start_row=br, start_column=4, end_row=br, end_column=len(_SUMMARY_HEADERS))
+        br += 1
+
+    # ---- Per-scenario table ----
+    header_row = br + 1  # one blank row after the box
+    _header_row(ws, row=header_row, headers=_SUMMARY_HEADERS)
+    ws.row_dimensions[header_row].height = 26
+    data_start = header_row + 1
+
+    for i, srow in enumerate(rows, start=1):
+        r = data_start + i - 1
+        values = [
+            i, srow.batch, srow.category, srow.scenario, srow.total, srow.automated,
+            srow.passed, srow.failed, srow.manual, srow.na, srow.confidence,
+            srow.verdict, srow.advice,
+        ]
+        for col, value in enumerate(values, start=1):
+            cell = ws.cell(row=r, column=col, value=value)
+            cell.border = _BORDER_ALL
+            if col in _SUMMARY_LEFT_COLS:
+                cell.alignment = Alignment(
+                    horizontal="left", vertical="center", wrap_text=(col == _SUMMARY_COL["Advice"])
+                )
+            else:
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+        if srow.failed > 0:
+            ws.cell(row=r, column=_SUMMARY_COL["Failed"]).font = Font(bold=True, color=_RED)
+        conf_cell = ws.cell(row=r, column=_SUMMARY_COL["Confidence"])
+        conf_cell.fill, conf_cell.font = _confidence_style(srow.confidence)
+        verdict_cell = ws.cell(row=r, column=_SUMMARY_COL["Verdict"])
+        verdict_cell.fill, verdict_cell.font = _verdict_style(srow)
+
+    _set_column_widths(ws, _SUMMARY_COL_WIDTHS)
+    if rows:
+        ws.freeze_panes = f"A{data_start}"
+        # Anchor the bottom pane to the first scrollable cell so the frozen header is not
+        # repainted below itself on open (see write_excel for the same fix).
+        ws.sheet_view.selection = [
+            Selection(pane="bottomLeft", activeCell=f"A{data_start}", sqref=f"A{data_start}")
+        ]
+        _auto_row_heights(ws, data_start_row=data_start, col_char_widths=_SUMMARY_COL_WIDTHS)
+
+    # ---- Sheet 2: Skipped & Errors ----
+    ws2 = wb.create_sheet("Skipped & Errors")
+    hdr_fill = PatternFill("solid", fgColor=_BLUE_HDR)
+    hdr_font = Font(bold=True, color=_WHITE)
+
+    a = ws2.cell(row=1, column=1, value="Skipped - RoadRunner-native export, no .xosc (NOT validated)")
+    a.fill, a.font = hdr_fill, hdr_font
+    ws2.merge_cells(start_row=1, start_column=1, end_row=1, end_column=2)
+    rr = 2
+    for d in meta.incompatible_dirs or ["None"]:
+        ws2.cell(row=rr, column=1, value=d)
+        rr += 1
+
+    rr += 1
+    b = ws2.cell(row=rr, column=1, value="Errors - crashed during validation (re-run these)")
+    b.fill, b.font = hdr_fill, hdr_font
+    ws2.merge_cells(start_row=rr, start_column=1, end_row=rr, end_column=2)
+    rr += 1
+    eh1 = ws2.cell(row=rr, column=1, value="Scenario")
+    eh2 = ws2.cell(row=rr, column=2, value="Error")
+    eh1.font = eh2.font = Font(bold=True)
+    rr += 1
+    for rel, msg in meta.error_details or [("None", "")]:
+        ws2.cell(row=rr, column=1, value=rel)
+        ws2.cell(row=rr, column=2, value=msg).alignment = Alignment(wrap_text=True)
+        rr += 1
+
+    rr += 1
+    c = ws2.cell(row=rr, column=1, value="Report write warnings - validation succeeded, the report file did not write")
+    c.fill, c.font = hdr_fill, hdr_font
+    ws2.merge_cells(start_row=rr, start_column=1, end_row=rr, end_column=2)
+    rr += 1
+    wh1 = ws2.cell(row=rr, column=1, value="Scenario")
+    wh2 = ws2.cell(row=rr, column=2, value="Reason")
+    wh1.font = wh2.font = Font(bold=True)
+    rr += 1
+    for rel, msg in meta.report_warnings or [("None", "")]:
+        ws2.cell(row=rr, column=1, value=rel)
+        ws2.cell(row=rr, column=2, value=msg).alignment = Alignment(wrap_text=True)
+        rr += 1
+
+    ws2.column_dimensions["A"].width = 70
+    ws2.column_dimensions["B"].width = 70
+
+    wb.save(output_path)
+    log.info("Batch summary written to %s", output_path)
     return output_path
 
 
