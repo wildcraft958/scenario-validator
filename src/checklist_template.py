@@ -14,7 +14,7 @@ deliberate edits agreed with the team:
     the first three NM numbers keep matching the reviewer checklist exactly;
   * for any checkpoint the validator computes, the writer shows OUR check description
     (our wording/logic wins); the reference text here is the fallback for the
-    checkpoints we do not automate (MD_06-11, FB_02), which export as Manual rows.
+    checkpoints we do not automate (MD_06-11), which export as Manual rows.
 
 Text is normalised to ASCII (curly quotes -> straight) to keep the codebase free of
 special characters.

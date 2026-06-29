@@ -272,8 +272,8 @@ def write_reference_checklist(
     Prequisites) - same sheets, column layout and colours - so it drops straight into the
     team's review flow. Self Review carries our verdict as text (like the reviewer file);
     Review1/Review2 stay blank for humans. The Issues Log table is filled from the run: one
-    row per failed or manual check. Checkpoints the validator does not compute (MD_06-11,
-    FB_02) export as Manual rows with the reference wording."""
+    row per failed or manual check. Checkpoints the validator does not compute (MD_06-11)
+    export as Manual rows with the reference wording."""
     from .checklist_template import (
         CHECKLIST_COLUMNS,
         CHECKLIST_HEADER_LABELS,

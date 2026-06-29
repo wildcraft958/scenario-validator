@@ -8,7 +8,7 @@ A command-line tool that automatically validates RoadRunner scenario exports aga
 
 When a RoadRunner scenario is exported, it must be validated against the checklist before the OpenDesk / HIL phase. This tool reads the exported files and:
 
-1. Runs **41 checks across 6 categories** automatically: Naming (5), Road (6), Scenario (22), Model Desk (5), Model Review (2), Functional Block (1).
+1. Runs **43 checks across 6 categories** automatically: Naming (6), Road (6), Scenario (22), Model Desk (5), Model Review (2), Functional Block (2).
 2. Estimates the **impact location** geometrically from the trajectories, grounded in the EuroNCAP Frontal Collisions v1.1 reference-point definition (§1.2.5), not a manual visual check.
 3. Writes a colour-coded, pre-filled Excel report (3 sheets) matching the team template.
 4. Writes a full audit log for traceability.
@@ -108,8 +108,9 @@ layout and colours - so it drops straight into the existing review flow. Our ver
 the Self Review column (as text, like the reviewer file) and Review1/Review2 stay blank for
 human reviewers. The ChecklistFinal **Issues Log** table is filled from the run: one row per
 failed or manual check, with Sr No and Details populated and the Severity / Status dropdowns
-left for the reviewer to triage. Checkpoints the validator does not automate (MD_06-11, FB_02)
-appear as Manual rows with the reviewer wording. The automation trust level is not shown here
+left for the reviewer to triage. Checkpoints the validator does not automate (MD_06-11, the
+ModelDesk interpreter tool-state checks) appear as Manual rows with the reviewer wording. The
+automation trust level is not shown here
 - it stays in the native Validation report. Tune the ChecklistFinal column widths in
 `config.json` (`checklist_column_widths`) without touching code.
 
