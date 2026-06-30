@@ -327,9 +327,10 @@ def check_nm_04(scenario_dir: Path, config: Config) -> CheckResult:
     Structure: program_type_<n>VUT_<n><Target>_<n>Imp (e.g. AEB_CCFtap_10VUT_30GVT_50Imp).
     Value cross-checks (only when the protocol value is configured - unset values are
     skipped so partially-specified taxonomy entries do not FAIL):
-      * VUT speed within the scenario's vut_speed_range_kmh
       * target-type token recognised
       * impact token is one of the allowed protocol overlaps (exact correctness is SC_16/17)
+    The VUT speed range is graded by CH_SC_18 alone, not here, so one out-of-range speed is
+    not double-flagged by two checks.
     """
     base = _canonical_base(scenario_dir, config) or scenario_dir.name
     tag = detect_scenario_tag(base, config)
@@ -360,12 +361,6 @@ def check_nm_04(scenario_dir: Path, config: Config) -> CheckResult:
         )
 
     value_problems: list[str] = []
-    if proto.vut_speed_range_kmh and parsed.vut_speed_kmh is not None:
-        lo, hi = proto.vut_speed_range_kmh
-        if not (lo <= parsed.vut_speed_kmh <= hi):
-            value_problems.append(
-                f"VUT speed {parsed.vut_speed_kmh} km/h outside protocol range [{lo:.0f}, {hi:.0f}]"
-            )
     if config.allowed_impact_overlaps and parsed.impact_pct is not None:
         if parsed.impact_pct not in {int(v) for v in config.allowed_impact_overlaps}:
             value_problems.append(

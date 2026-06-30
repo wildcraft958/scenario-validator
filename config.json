@@ -114,11 +114,11 @@
     "CPFA": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 60] },
     "CPNA": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 60] },
     "CPNCO": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 60] },
-    "CPTA": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 60] },
-    "CPTAfo": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 60] },
-    "CPTAfs": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 60] },
-    "CPTAno": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 60] },
-    "CPTAns": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 60] },
+    "CPTA": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 25] },
+    "CPTAfo": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 25] },
+    "CPTAfs": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 25] },
+    "CPTAno": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 25] },
+    "CPTAns": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 25] },
     "CBFA": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 60] },
     "CBNA": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 60] },
     "CBNAO": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 60] },
@@ -130,7 +130,7 @@
     "CBTAns": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 25], "side_impact": true },
     "CMCscp": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [20, 80], "side_impact": true },
     "CMFtap": { "impact_tolerance_class": "crossing", "vut_speed_range_kmh": [10, 25] },
-    "CMRs": { "impact_tolerance_class": "longitudinal", "vut_speed_range_kmh": [10, 50] },
-    "CMRb": { "impact_tolerance_class": "longitudinal", "vut_speed_range_kmh": [30, 80] }
+    "CMRs": { "impact_tolerance_class": "longitudinal", "vut_speed_range_kmh": [10, 80] },
+    "CMRb": { "impact_tolerance_class": "longitudinal", "vut_speed_range_kmh": [30, 130] }
   }
 }

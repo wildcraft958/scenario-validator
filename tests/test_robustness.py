@@ -667,9 +667,10 @@ class TestNM04FilenamePattern:
     def test_missing_token_fails(self, config, tmp_path):
         assert self._check(config, tmp_path, "AEB_CCFtap_20VUT_50Imp").status == "FAIL"
 
-    def test_vut_speed_out_of_range_fails(self, config, tmp_path):
-        # CCFtap protocol VUT range is [10, 25]; 80 km/h is out of range
-        assert self._check(config, tmp_path, "AEB_CCFtap_80VUT_45GVT_50Imp").status == "FAIL"
+    def test_vut_speed_out_of_range_not_flagged_here(self, config, tmp_path):
+        # Speed range is owned by CH_SC_18, not NM_04. An out-of-range VUT speed must not
+        # double-FAIL here - the filename itself is well-formed (80 km/h is flagged by SC_18).
+        assert self._check(config, tmp_path, "AEB_CCFtap_80VUT_45GVT_50Imp").status == "PASS"
 
     def test_disallowed_impact_token_fails(self, config, tmp_path):
         # 33 is not an allowed protocol overlap
