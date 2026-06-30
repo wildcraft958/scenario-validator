@@ -17,7 +17,8 @@ def _rows() -> list[ScenarioRow]:
     return [
         ScenarioRow(batch="Batch 1", category="Car_to_Car", scenario="AEB_clean",
                     total=43, automated=43, passed=43, failed=0, manual=0, na=0,
-                    confidence="High", verdict="P", advice="Clean - all automated checks passed"),
+                    confidence="High", verdict="P", advice="All automated checks passed",
+                    path="/data/Batch 1/Car_to_Car/AEB_clean"),
         ScenarioRow(batch="Batch 1", category="Car_to_Car", scenario="AEB_fail",
                     total=43, automated=40, passed=30, failed=2, manual=3, na=8,
                     confidence="Medium", verdict="R", advice="Verify 2 failed: CH_SC_07; 3 manual to review"),
@@ -63,6 +64,16 @@ def test_one_row_per_scenario(tmp_path: Path):
     assert scenarios == ["AEB_clean", "AEB_fail", "AEB_crash"]
     # S/No is 1..n
     assert [ws.cell(row=hr + 1 + i, column=1).value for i in range(3)] == [1, 2, 3]
+
+
+def test_path_column_holds_absolute_path(tmp_path: Path):
+    out = tmp_path / "Summary.xlsx"
+    write_batch_summary(_rows(), _meta(), out)
+    ws = openpyxl.load_workbook(out)["Summary"]
+    hr = _find_header_row(ws)
+    pcol = len(_SUMMARY_HEADERS)  # Path is the last column
+    assert ws.cell(row=hr, column=pcol).value == "Path"
+    assert ws.cell(row=hr + 1, column=pcol).value == "/data/Batch 1/Car_to_Car/AEB_clean"
 
 
 def test_top_box_values(tmp_path: Path):

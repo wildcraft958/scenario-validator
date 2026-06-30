@@ -33,26 +33,34 @@ def test_verdict_pass_requires_zero_fail_and_zero_manual():
     row = _row([_result("CH_SC_01", "PASS"), _result("CH_SC_02", "PASS")])
     assert row.verdict == "P"
     assert row.confidence == "High"
-    assert row.advice == "Clean - all automated checks passed"
+    assert row.advice == "All automated checks passed"
 
 
 def test_manual_forces_review_even_with_no_failures():
     row = _row([_result("CH_SC_01", "PASS"), _result("CH_MD_06", "MANUAL_REVIEW")])
     assert row.verdict == "R"
     assert row.failed == 0
-    assert "1 manual to review" in row.advice
+    assert "1 to review" in row.advice
 
 
 def test_failure_forces_review_and_lists_ids():
     row = _row([_result("CH_SC_01", "PASS"), _result("CH_SC_07", "FAIL")])
     assert row.verdict == "R"
-    assert row.advice.startswith("Verify 1 failed: CH_SC_07")
-    assert "heuristic" not in row.advice  # fully-automated fail is not flagged heuristic
+    assert row.advice.startswith("SC_07")  # short id, no "CH_" prefix
+    assert "heuristic" not in row.advice  # the tag is gone; Confidence carries that signal
 
 
-def test_heuristic_failure_is_flagged_for_confirmation():
-    row = _row([_result("CH_SC_16", "FAIL", level="Partially Automated")])
-    assert "CH_SC_16 (heuristic - confirm)" in row.advice
+def test_advice_leads_with_concrete_reason_no_heuristic_tag():
+    r = CheckResult(
+        check_id="CH_SC_18", category="Scenario", description="VUT speed",
+        status="FAIL", automation_level="Partially Automated", automation_note="t",
+        comment="VUT speed = 100.0 km/h - outside protocol range [30, 130] km/h",
+    )
+    stats = SummaryStats.from_results([r], scenario_name="X", run_timestamp="t", protocol_version="v")
+    row = build_scenario_row(Path("X"), results=[r], stats=stats)
+    assert row.advice.startswith("SC_18: VUT speed = 100.0 km/h")  # leads with the concrete reason
+    assert "heuristic" not in row.advice
+    assert row.confidence == "Low"  # a heuristic failure is flagged here, via Confidence
 
 
 def test_confidence_high_when_all_decisive_are_fully_automated():
@@ -60,10 +68,19 @@ def test_confidence_high_when_all_decisive_are_fully_automated():
     assert row.confidence == "High"
 
 
-def test_confidence_medium_for_mixed_tiers():
-    results = [_result(f"CH_F{i}", "PASS") for i in range(7)]
-    results += [_result(f"CH_P{i}", "PASS", level="Partially Automated") for i in range(3)]
-    row = _row(results)  # ratio 0.7 -> Medium
+def test_confidence_high_at_60pct_deterministic_boundary():
+    # A clean, well-validated scenario (>=60% deterministic, no heuristic failure) is High:
+    # the estimate-based checks here are cross-checked against the filename, not blind guesses.
+    results = [_result(f"CH_F{i}", "PASS") for i in range(6)]
+    results += [_result(f"CH_P{i}", "PASS", level="Partially Automated") for i in range(4)]
+    row = _row(results)  # ratio 0.6 -> High
+    assert row.confidence == "High"
+
+
+def test_confidence_medium_for_estimate_heavy_clean_run():
+    results = [_result(f"CH_F{i}", "PASS") for i in range(4)]
+    results += [_result(f"CH_P{i}", "PASS", level="Partially Automated") for i in range(6)]
+    row = _row(results)  # ratio 0.4 -> Medium
     assert row.confidence == "Medium"
 
 
@@ -79,13 +96,30 @@ def test_confidence_na_when_no_decisive_verdicts():
     assert row.confidence == "n/a"
 
 
-def test_manual_tier_decisive_lowers_confidence_not_na():
-    # A "Manual"-tier check that still returned a verdict is a low-trust decisive verdict:
-    # it must count in the denominator (drag confidence down), never silently vanish to n/a.
+def test_manual_tier_decisive_counts_in_denominator_not_na():
+    # A "Manual"-tier check that still returned a verdict is a decisive verdict: it must
+    # count in the denominator (drag confidence down), never silently vanish to n/a.
     results = [_result("CH_F0", "PASS"), _result("CH_SC_02", "PASS", level="Manual")]
     row = _row(results)
     assert row.confidence != "n/a"
-    assert row.confidence == "Low"  # 1 fully / 2 decisive = 0.5 < CONF_MED
+    assert row.confidence == "Medium"  # 1 fully / 2 decisive = 0.5 -> Medium
+
+
+def test_heuristic_failure_forces_low_confidence():
+    # A failure on a Partially-Automated (estimate) check is the top false-alarm risk:
+    # the whole row drops to Low even when the deterministic share is otherwise high.
+    results = [_result(f"CH_F{i}", "PASS") for i in range(9)]
+    results += [_result("CH_SC_16", "FAIL", level="Partially Automated")]
+    row = _row(results)  # ratio 0.9, but a heuristic failure -> Low
+    assert row.confidence == "Low"
+
+
+def test_deterministic_failure_keeps_confidence_high():
+    # A hard, reproducible failure does not lower trust in the verdict - it IS the verdict.
+    results = [_result(f"CH_F{i}", "PASS") for i in range(9)]
+    results += [_result("CH_NM_03", "FAIL")]  # Fully Automated failure
+    row = _row(results)
+    assert row.confidence == "High"
 
 
 def test_error_row_is_marked_and_never_a_pass():

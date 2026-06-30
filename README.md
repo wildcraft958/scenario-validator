@@ -141,15 +141,18 @@ python tools/batch_validate.py "Eval_Data/01_Batch 1"
 The **Summary** sheet has a top box (root, run time, discovered / validated / skipped / errored,
 Pass / Review counts, confidence spread) over one row per scenario:
 
-`S/No | Batch | Category | Scenario | Total | Automated | Passed | Failed | Manual | NA | Confidence | Verdict | Advice`
+`S/No | Batch | Category | Scenario | Total | Automated | Passed | Failed | Manual | NA | Confidence | Verdict | Advice | Path`
 
 - **Automated** = checks the tool decided itself (`Total - Manual`).
-- **Confidence** = how much of the decisive (pass/fail) verdict came from *fully*-automated checks
-  vs heuristic (*partially*-automated) ones - the lower it is, the more a false positive could hide.
-  Buckets High / Medium / Low (thresholds are constants in `src/rollup.py`, not config).
+- **Confidence** = how far the automated verdict can be trusted. A failure that rests on a
+  heuristic (*partially*-automated) check drops the row to **Low** - confirm it first; otherwise the
+  deterministic share of the decisive (pass/fail) verdicts buckets it High (>=60%) / Medium (>=40%) /
+  Low (thresholds are constants in `src/rollup.py`, not config).
 - **Verdict** = `P` only when there are 0 failures **and** 0 manual checks, else `R` (`ERROR` on crash).
-- **Advice** names the checks to look at; a failure on a heuristic check is tagged
-  `(heuristic - confirm)` so the reviewer double-checks exactly where a false positive could hide.
+- **Advice** leads with the concrete reason for each failure (short id + the check's own message,
+  e.g. `SC_18: VUT speed 100 outside [30,130]`), then the count still to review. Whether a failure
+  rests on an estimate is carried by the **Confidence** column, not a tag in the text.
+- **Path** = absolute path to the scenario folder, so a reviewer can open it directly.
 
 For corpus research (per-check pass rates, per-family summary, automation coverage in a single
 markdown file) use `tools/run_eval.py Eval_Data --report ./eval_reports/report.md` instead.
@@ -274,7 +277,7 @@ scenario_validator/
 │       ├── model_desk.py     # Model Desk route checks (CH_MD_01..05)
 │       ├── model_review.py   # Speed sanity + braking decel (CH_MR_01..02)
 │       └── functional_block.py # Functional / Test-Automation workbook (CH_FB_01..02)
-└── tests/                    # 193 tests (unit + mutation robustness + protocol)
+└── tests/                    # 223 tests (unit + mutation robustness + protocol)
 ```
 
 ---
@@ -282,7 +285,7 @@ scenario_validator/
 ## Running tests
 
 ```bash
-python -m pytest tests/ -q      # 193 tests
+python -m pytest tests/ -q      # 223 tests
 ```
 
 The suite mixes unit tests, mutation-based robustness tests on the real RoadRunner example exports (`examples/`), and protocol-grounded impact tests. Static typing is clean under `pyright src/ validator.py tools/`.

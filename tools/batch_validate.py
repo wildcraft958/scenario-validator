@@ -97,12 +97,12 @@ def main() -> int:
             msg = f"{type(exc).__name__}: {exc}"
             error_details.append((str(rel), msg))
             logging.error("Scenario %s crashed:\n%s", rel, traceback.format_exc())
-            rows.append(build_scenario_row(rel, error=msg))
+            rows.append(build_scenario_row(rel, error=msg, abs_path=str(sdir)))
             if not args.quiet:
                 print(f"[{i}/{len(scenario_dirs)}] ERROR  {rel}  ({type(exc).__name__})")
             continue
 
-        row = build_scenario_row(rel, results=results, stats=stats)
+        row = build_scenario_row(rel, results=results, stats=stats, abs_path=str(sdir))
         rows.append(row)
         checks_per_scenario = max(checks_per_scenario, stats.total)
 

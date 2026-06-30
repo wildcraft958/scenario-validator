@@ -84,16 +84,16 @@ _VALIDATION_COL_CHARS = {1: 16, 2: 16, 3: 52, 4: 10, 5: 60, 6: 22, 7: 20, 8: 20,
 # Root batch-summary (Design A: trust dashboard) - one row per scenario.
 _SUMMARY_HEADERS = [
     "S/No", "Batch", "Category", "Scenario", "Total", "Automated", "Passed",
-    "Failed", "Manual", "NA", "Confidence", "Verdict", "Advice",
+    "Failed", "Manual", "NA", "Confidence", "Verdict", "Advice", "Path",
 ]
 _SUMMARY_COL_WIDTHS = {
     1: 6, 2: 16, 3: 18, 4: 46, 5: 8, 6: 11, 7: 9, 8: 8, 9: 9, 10: 6,
-    11: 12, 12: 9, 13: 64,
+    11: 12, 12: 9, 13: 64, 14: 70,
 }
 # Column numbers are derived from the header order so the writer never carries magic
 # indices: rename or reorder a header and the styling follows.
 _SUMMARY_COL = {name: i + 1 for i, name in enumerate(_SUMMARY_HEADERS)}
-_SUMMARY_LEFT_COLS = {_SUMMARY_COL[n] for n in ("Batch", "Category", "Scenario", "Advice")}
+_SUMMARY_LEFT_COLS = {_SUMMARY_COL[n] for n in ("Batch", "Category", "Scenario", "Advice", "Path")}
 
 
 def _header_row(ws, row: int, headers: list[str], start_col: int = 1) -> None:
@@ -355,10 +355,14 @@ def write_reference_checklist(
         d = ws.cell(row=row, column=4, value=result.description if result else ref_text)
         d.alignment = Alignment(wrap_text=True, vertical="center")
         d.border = _BORDER_ALL
-        # Self Review = our verdict, shown as text with no fill (like the reviewer file).
-        sr = ws.cell(row=row, column=5, value=result.result if result else "Manual")
+        # Self Review = our verdict, RAG-coloured (Yes=green / No=red / NA=grey / Manual=yellow)
+        # so the outcome reads at a glance.
+        verdict = result.result if result else "Manual"
+        sr = ws.cell(row=row, column=5, value=verdict)
         sr.alignment = Alignment(horizontal="center", vertical="center")
         sr.border = _BORDER_ALL
+        sr.fill = _STATUS_FILL.get(verdict, PatternFill("solid", fgColor=_GREY))
+        sr.font = _STATUS_FONT.get(verdict, Font())
         # Review1 / Review2 left blank for human reviewers (bordered).
         ws.cell(row=row, column=6).border = _BORDER_ALL
         ws.cell(row=row, column=7).border = _BORDER_ALL
@@ -412,9 +416,12 @@ def write_reference_checklist(
             ws.cell(row=rr, column=col).border = _BORDER_ALL
         if idx < len(issues):
             r = issues[idx]
-            ws.cell(row=rr, column=2, value=idx + 1).alignment = Alignment(
-                horizontal="center", vertical="center"
-            )
+            # Colour the Sr No cell by severity (No=red / Manual=yellow) so failures stand
+            # out from manual-review items at a glance.
+            sr_no = ws.cell(row=rr, column=2, value=idx + 1)
+            sr_no.alignment = Alignment(horizontal="center", vertical="center")
+            sr_no.fill = _STATUS_FILL.get(r.result, PatternFill("solid", fgColor=_GREY))
+            sr_no.font = _STATUS_FONT.get(r.result, Font())
             ws.cell(row=rr, column=4, value=_issue_details(r)).alignment = Alignment(
                 wrap_text=True, vertical="center"
             )
@@ -532,7 +539,7 @@ def write_batch_summary(
         values = [
             i, srow.batch, srow.category, srow.scenario, srow.total, srow.automated,
             srow.passed, srow.failed, srow.manual, srow.na, srow.confidence,
-            srow.verdict, srow.advice,
+            srow.verdict, srow.advice, srow.path,
         ]
         for col, value in enumerate(values, start=1):
             cell = ws.cell(row=r, column=col, value=value)
@@ -552,12 +559,10 @@ def write_batch_summary(
 
     _set_column_widths(ws, _SUMMARY_COL_WIDTHS)
     if rows:
-        ws.freeze_panes = f"A{data_start}"
-        # Anchor the bottom pane to the first scrollable cell so the frozen header is not
-        # repainted below itself on open (see write_excel for the same fix).
-        ws.sheet_view.selection = [
-            Selection(pane="bottomLeft", activeCell=f"A{data_start}", sqref=f"A{data_start}")
-        ]
+        # Deliberately no frozen panes. Freezing at the header row would also pin the 13-row
+        # top box above it (freeze panes always pins a contiguous top block), which eats the
+        # screen and makes the sheet feel unscrollable. The sheet opens at A1 with the box
+        # visible and scrolls normally.
         _auto_row_heights(ws, data_start_row=data_start, col_char_widths=_SUMMARY_COL_WIDTHS)
 
     # ---- Sheet 2: Skipped & Errors ----

@@ -16,15 +16,24 @@ from pydantic import BaseModel
 
 from .models import CheckResult, SummaryStats
 
-# Confidence buckets over the decisive (PASS/FAIL) verdicts, by share that is FULLY
-# automated. Anything not fully automated (heuristic "Partially Automated", or a
-# judgement "Manual"-tier check that still returned a verdict) lowers it, because those
-# are exactly where a false positive can hide. Tunable here on purpose - these are
-# reporting thresholds, not protocol tolerances, so they stay out of config.json.
-CONF_HIGH = 0.9
-CONF_MED = 0.6
+# Confidence says how far a scenario's automated verdict can be trusted on its own.
+# Two genuine false-result risks lower it:
+#   1. A FAILURE that rests on a geometric estimate (a "Partially Automated" check that
+#      FAILed) is the top false-ALARM risk - that flag may not survive HIL, so the whole
+#      row drops to Low until a human confirms it. This is the signal that actually varies
+#      scenario to scenario and is worth a reviewer's eye.
+#   2. A low share of deterministic verdicts among the decisive ones - the more of the
+#      pass/fail picture rests on estimates, the less a clean result can be trusted.
+# A clean, well-validated scenario reads High even though ~1/3 of its checks are estimates:
+# those estimate-based checks (impact %, turn radius, speed) are cross-checked against the
+# filename ground truth, not blind guesses, so >=60% deterministic is high trust here.
+# Tunable on purpose - these are reporting thresholds, not protocol tolerances, so they
+# stay out of config.json.
+CONF_HIGH = 0.6
+CONF_MED = 0.4
 
 _ADVICE_ID_CAP = 6
+_ADVICE_REASON_CHARS = 70
 _NUM_PREFIX = re.compile(r"^\d+[_\s]+")
 
 
@@ -43,6 +52,7 @@ class ScenarioRow(BaseModel):
     confidence: str = "n/a"  # High / Medium / Low / n/a
     verdict: str = "ERROR"  # P / R / ERROR
     advice: str = ""
+    path: str = ""  # absolute path to the scenario folder, so a reviewer can open it directly
 
 
 class BatchSummaryMeta(BaseModel):
@@ -77,15 +87,34 @@ def _split_path(rel_path: Path) -> tuple[str, str]:
     return batch, category
 
 
-def _confidence(fully: int, decisive: int) -> str:
-    if decisive == 0:
+def _confidence(results: list[CheckResult]) -> str:
+    decisive = [r for r in results if r.status in ("PASS", "FAIL")]
+    if not decisive:
         return "n/a"
-    ratio = fully / decisive
+    # A flagged failure that rests on a geometric estimate may not survive HIL: treat the
+    # whole row as low-trust until a human confirms it (the verdict could be a false alarm).
+    if any(r.status == "FAIL" and r.automation_level == "Partially Automated" for r in decisive):
+        return "Low"
+    ratio = sum(1 for r in decisive if r.automation_level == "Fully Automated") / len(decisive)
     if ratio >= CONF_HIGH:
         return "High"
     if ratio >= CONF_MED:
         return "Medium"
     return "Low"
+
+
+def _fail_reason(r: CheckResult) -> str:
+    """Short id + the concrete failure reason, e.g. 'SC_18: VUT speed 100 ... outside [30,130]'.
+
+    Leads with what actually failed (from the check's own comment) so a reviewer can act on the
+    summary without opening the per-scenario file. Whether a failure rests on an estimate is now
+    carried by the Confidence column (heuristic failure -> Low), not by a tag in the text.
+    """
+    short = r.check_id.removeprefix("CH_")
+    reason = " ".join((r.comment or "").split())
+    if len(reason) > _ADVICE_REASON_CHARS:
+        reason = reason[:_ADVICE_REASON_CHARS].rsplit(" ", 1)[0] + "..."
+    return f"{short}: {reason}" if reason else short
 
 
 def _advice(results: list[CheckResult], manual_count: int, error: str | None) -> str:
@@ -94,19 +123,13 @@ def _advice(results: list[CheckResult], manual_count: int, error: str | None) ->
     fails = [r for r in results if r.status == "FAIL"]
     parts: list[str] = []
     if fails:
-        ids = [
-            f"{r.check_id} (heuristic - confirm)"
-            if r.automation_level == "Partially Automated"
-            else r.check_id
-            for r in fails
-        ]
-        shown = ids[:_ADVICE_ID_CAP]
-        more = len(ids) - len(shown)
-        tail = f" +{more} more" if more > 0 else ""
-        parts.append(f"Verify {len(fails)} failed: {', '.join(shown)}{tail}")
+        shown = [_fail_reason(r) for r in fails[:_ADVICE_ID_CAP]]
+        more = len(fails) - len(shown)
+        tail = f"; +{more} more" if more > 0 else ""
+        parts.append("; ".join(shown) + tail)
     if manual_count:
-        parts.append(f"{manual_count} manual to review")
-    return "; ".join(parts) if parts else "Clean - all automated checks passed"
+        parts.append(f"{manual_count} to review")
+    return ". ".join(parts) if parts else "All automated checks passed"
 
 
 def build_scenario_row(
@@ -114,6 +137,7 @@ def build_scenario_row(
     results: list[CheckResult] | None = None,
     stats: SummaryStats | None = None,
     error: str | None = None,
+    abs_path: str = "",
 ) -> ScenarioRow:
     """Condense one scenario run into a summary row. Pass `error` (and omit results/stats)
     for a scenario that crashed - it becomes an ERROR row so it is never mistaken for a pass."""
@@ -128,10 +152,9 @@ def build_scenario_row(
             verdict="ERROR",
             confidence="n/a",
             advice=_advice([], 0, error or "validation did not complete"),
+            path=abs_path,
         )
 
-    decisive = [r for r in results if r.status in ("PASS", "FAIL")]
-    fully = sum(1 for r in decisive if r.automation_level == "Fully Automated")
     verdict = "P" if (stats.failed == 0 and stats.manual == 0) else "R"
 
     return ScenarioRow(
@@ -144,7 +167,8 @@ def build_scenario_row(
         failed=stats.failed,
         manual=stats.manual,
         na=stats.na,
-        confidence=_confidence(fully, len(decisive)),
+        confidence=_confidence(results),
         verdict=verdict,
         advice=_advice(results, stats.manual, None),
+        path=abs_path,
     )
