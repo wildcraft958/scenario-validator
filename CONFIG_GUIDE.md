@@ -77,10 +77,9 @@ name prefix - nothing else to update.
 | `tag` | Scenario family name as it appears in filenames (`CCFhol`, `CPTA`, `CPNA-50` …) |
 | `impact_tolerance_class` | Impact-tolerance routing (NOT the EuroNCAP Scenario-Type taxonomy): `longitudinal` (CH_SC_17 applies), `crossing` (CH_SC_16 applies), or `head-on`. The legacy column name `type` is still accepted |
 | `vut_min_kmh` / `vut_max_kmh` | Allowed VUT speed range per protocol (CH_SC_18). Leave blank if unknown |
-| `target_speed_kmh` | Protocol target speed, if fixed |
-| `impact_overlap_pct` | The designed impact percentage (the `NNImp` in the filename) - used by the geometric impact estimate in CH_SC_16/17 |
-| `direction` | Free-text note (`crossing`, `same`, …) |
+| `side_impact` | TRUE for side-impact scenarios (CMCscp, CBTAfs, CBTAns) - impact % is measured across VUT length, not width |
 | `has_sov` | TRUE only for scenarios that include an overtaken vehicle (CCFhol) |
+| `impact_overlaps` | Comma-separated list of the protocol impact-location %s this family allows (e.g. `-25, 0, 25, 50, 75, 100, 125` for CCRb). CH_NM_04 checks the filename `NNImp` token against it; blank = fall back to the `allowed_impact_overlaps` site setting. Negative and >100 values are allowed (rear partial pre/post overlap) |
 
 `Vehicle Dimensions` sheet: bounding-box fallbacks used **only** when the `.xosc` does
 not embed a BoundingBox (RoadRunner exports always do).

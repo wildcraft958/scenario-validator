@@ -76,11 +76,19 @@ class ParsedName:
 
 
 def _split_int_suffix(token: str, suffix: str) -> int | None:
-    """'10VUT' + 'VUT' -> 10 ; returns None if it doesn't match <int><suffix>."""
+    """'10VUT' + 'VUT' -> 10 ; '-25Imp' + 'Imp' -> -25 ; returns None if the head is not an
+    (optionally signed) integer.
+
+    The sign matters: EuroNCAP longitudinal impact overlaps are legitimately negative (e.g.
+    -25Imp = 25% pre-overlap, pg29). A digit-only test drops the '-', which used to make the
+    whole name parse as malformed and cascade into a bogus SC_16/17 fallback."""
     if not token.upper().endswith(suffix.upper()):
         return None
     head = token[: len(token) - len(suffix)]
-    return int(head) if head.isdigit() else None
+    sign = ""
+    if head[:1] in ("+", "-"):
+        sign, head = head[0], head[1:]
+    return int(sign + head) if head.isdigit() else None
 
 
 def _split_int_prefix(token: str) -> tuple[int | None, str]:
@@ -361,10 +369,15 @@ def check_nm_04(scenario_dir: Path, config: Config) -> CheckResult:
         )
 
     value_problems: list[str] = []
-    if config.allowed_impact_overlaps and parsed.impact_pct is not None:
-        if parsed.impact_pct not in {int(v) for v in config.allowed_impact_overlaps}:
+    # The allowed overlap set is per FAMILY (EuroNCAP test matrices differ family to family:
+    # CCR rear allows -25/125, VRU crossing 10..90, CPNCO only 25/50/75, side-impact 0/75/100).
+    # A flat list would reject valid rear edges and over-accept them for turning families.
+    allowed_overlaps = config.impact_overlaps_for(parsed.type_tag or tag)
+    if allowed_overlaps and parsed.impact_pct is not None:
+        if parsed.impact_pct not in {int(v) for v in allowed_overlaps}:
             value_problems.append(
-                f"impact {parsed.impact_pct}% not an allowed overlap {sorted({int(v) for v in config.allowed_impact_overlaps})}"
+                f"impact {parsed.impact_pct}% not an allowed overlap for {parsed.type_tag or tag} "
+                f"{sorted({int(v) for v in allowed_overlaps})}"
             )
 
     if value_problems:

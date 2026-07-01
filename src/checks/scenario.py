@@ -1204,9 +1204,15 @@ def check_sc_16(
     if not proto or proto.impact_tolerance_class not in ("crossing",):
         return _make("CH_SC_16", "NA", "Not a turning/crossing scenario")
 
-    # The per-instance designed overlap comes from the scenario filename (e.g. 50Imp);
-    # fall back to the protocol's nominal value when the filename token is unavailable.
+    # The per-instance designed overlap comes from the scenario filename (e.g. 50Imp); the
+    # optional per-family config override is the only fallback. With neither we cannot know the
+    # target impact %, so return MANUAL rather than grade the geometry against a guessed default.
     expected = designed_impact_pct if designed_impact_pct is not None else proto.impact_overlap_pct
+    if expected is None:
+        return _make("CH_SC_16", "MANUAL_REVIEW",
+                     "Designed impact % is unknown - the filename carried no valid <n>Imp token "
+                     "and no scenarios.*.impact_overlap_pct override is set. Verify the intended "
+                     "impact location in RoadRunner.")
     tolerance = config.impact_tolerance_pct
     vut = _identify_vut(xosc_root, config)
     if not vut:
@@ -1233,8 +1239,15 @@ def check_sc_17(
     if not proto or proto.impact_tolerance_class not in ("longitudinal", "head-on"):
         return _make("CH_SC_17", "NA", "Not a longitudinal/head-on scenario")
 
-    # Per-instance designed overlap from the filename (e.g. 50Imp); fall back to protocol.
+    # Per-instance designed overlap from the filename (e.g. 50Imp); the optional per-family
+    # config override is the only fallback. With neither, return MANUAL rather than grade against
+    # a guessed default (a silent 50% default once produced false FAILs on -25Imp scenarios).
     expected = designed_impact_pct if designed_impact_pct is not None else proto.impact_overlap_pct
+    if expected is None:
+        return _make("CH_SC_17", "MANUAL_REVIEW",
+                     "Designed impact % is unknown - the filename carried no valid <n>Imp token "
+                     "and no scenarios.*.impact_overlap_pct override is set. Verify the intended "
+                     "impact location in RoadRunner.")
     tolerance = config.longitudinal_impact_tolerance_pct
     vut = _identify_vut(xosc_root, config)
     if not vut:

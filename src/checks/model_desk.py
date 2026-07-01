@@ -49,38 +49,54 @@ def check_md_01(xodr_root: Any) -> CheckResult:
 
 
 def check_md_02(rd_data: dict, xosc_root: Any, config: Config) -> CheckResult:
-    """Number of routes must equal number of fellow actors."""
-    route_count = rd.get_route_count(rd_data)
-    entities = xosc.get_entities(xosc_root)
-    entity_names = [xosc.get_entity_name(e) for e in entities]
+    """Number of routes must equal the number of MOVING actors.
 
-    # Total actors include VUT + targets - all need routes
-    actor_count = len(entity_names)
+    Parked obstruction vehicles (CPNCO/CBNAO etc.) are placed, not driven, so they carry no
+    route by design - counting them would demand phantom routes. Grade against the movers,
+    reusing the shared obstruction detector so this stays consistent with CH_SC_14/CH_SC_22.
+    """
+    from .scenario import _obstruction_entity_names
+
+    route_count = rd.get_route_count(rd_data)
+    entity_names = [xosc.get_entity_name(e) for e in xosc.get_entities(xosc_root)]
+    obstructions = set(_obstruction_entity_names(xosc_root, config))
+    movers = [n for n in entity_names if n not in obstructions]
+    expected = len(movers)
+    parked_note = (
+        f" ({len(obstructions)} parked obstruction(s) excluded: {', '.join(sorted(obstructions))})"
+        if obstructions else ""
+    )
 
     if route_count == 0:
         return _make(
             "CH_MD_02",
             "FAIL" if rd_data.get("format") != "text" else "MANUAL_REVIEW",
             f"No routes parsed from .rd file (format: {rd_data.get('format', 'unknown')}). "
-            f"Expected {actor_count} routes for actors: {', '.join(entity_names)}",
+            f"Expected {expected} routes for moving actors: {', '.join(movers)}{parked_note}",
         )
 
-    if route_count == actor_count:
+    if route_count == expected:
         return _make(
             "CH_MD_02",
             "PASS",
-            f"{route_count} routes == {actor_count} actors ({', '.join(entity_names)})",
+            f"{route_count} routes == {expected} moving actors ({', '.join(movers)}){parked_note}",
         )
     return _make(
         "CH_MD_02",
         "FAIL",
-        f"{route_count} routes found but {actor_count} actors exist "
-        f"({', '.join(entity_names)}). Add missing routes.",
+        f"{route_count} routes found but {expected} moving actors need routes "
+        f"({', '.join(movers)}){parked_note}. Add missing routes.",
     )
 
 
-def check_md_03(rd_data: dict) -> CheckResult:
-    """All routes must span at least 2 roads (road segments)."""
+def check_md_03(rd_data: dict, is_junction_scenario: bool = True) -> CheckResult:
+    """Routes must span at least 2 roads - but only when there is a junction to traverse.
+
+    The >=2-roads rule targets junction/turning scenarios where a route crosses from an
+    approach road onto a connecting road. In a straight, non-junction scenario (e.g. a rear
+    Car-to-Car approach whose stationary target sits on a single road) a one-road route is
+    correct by design, so requiring two roads there is a false FAIL.
+    """
     segment_counts = rd.get_route_segment_counts(rd_data)
     if not segment_counts:
         return _make(
@@ -99,6 +115,13 @@ def check_md_03(rd_data: dict) -> CheckResult:
             "CH_MD_03",
             "PASS",
             f"All {len(segment_counts)} routes span >= 2 road segments",
+        )
+    if not is_junction_scenario:
+        return _make(
+            "CH_MD_03",
+            "PASS",
+            f"Non-junction scenario: single-road route(s) are expected with no junction to "
+            f"traverse ({', '.join(short_routes)}); route completeness is covered by MD_01/MD_05.",
         )
     return _make(
         "CH_MD_03",
@@ -180,7 +203,7 @@ def run_all(rd_data: dict, xosc_root: Any, xodr_root: Any, config: Config) -> li
     return [
         check_md_01(xodr_root),
         check_md_02(rd_data, xosc_root, config),
-        check_md_03(rd_data),
+        check_md_03(rd_data, is_junction),
         check_md_04(rd_data, xodr_root, config),
         check_md_05(rd_data, is_junction),
     ]

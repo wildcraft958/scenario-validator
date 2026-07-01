@@ -80,7 +80,7 @@ def _read_excel_config(path: Path) -> dict:
     for row in wb["Scenarios"].iter_rows(min_row=2, values_only=True):
         if row[0] is None:
             continue
-        tag, typ, vmin, vmax, side_impact, has_sov = (list(row) + [None] * 6)[:6]
+        tag, typ, vmin, vmax, side_impact, has_sov, overlaps = (list(row) + [None] * 7)[:7]
         entry: dict = {"impact_tolerance_class": str(typ).strip()}
         if vmin is not None and vmax is not None:
             entry["vut_speed_range_kmh"] = [vmin, vmax]
@@ -88,6 +88,10 @@ def _read_excel_config(path: Path) -> dict:
             entry["side_impact"] = True
         if has_sov in _truthy:
             entry["has_sov"] = True
+        if overlaps not in (None, ""):
+            entry["impact_overlaps"] = [
+                int(x) for x in str(overlaps).replace(" ", "").split(",") if x
+            ]
         scenarios[str(tag).strip()] = entry
     raw["scenarios"] = scenarios
 
@@ -258,9 +262,17 @@ class ScenarioProtocol(BaseModel):
         validation_alias=AliasChoices("impact_tolerance_class", "type"),
     )
     vut_speed_range_kmh: list[float] | None = None
-    # Per-instance designed overlap comes from the scenario FILENAME (the Imp token);
-    # this is only a fallback used by CH_SC_16/17 when the filename cannot be parsed.
-    impact_overlap_pct: float = 50.0
+    # Per-instance designed overlap comes from the scenario FILENAME (the Imp token). This
+    # optional per-family override is the ONLY other source; when both are absent CH_SC_16/17
+    # return MANUAL_REVIEW rather than grading against a guessed default (a silent 50% default
+    # once produced false FAILs on scenarios whose Imp token failed to parse, e.g. -25Imp).
+    impact_overlap_pct: float | None = None
+    # Exhaustive set of valid protocol impact-location %s for THIS family (EuroNCAP Frontal
+    # Collisions v1.1, section 3 test matrices). CH_NM_04 checks the filename Imp token against
+    # it; a family that omits it falls back to Config.allowed_impact_overlaps. Per-family because
+    # the grids genuinely differ: CCR rear -25..125, CCF front 25..100, VRU crossing 10..90,
+    # CPNCO 25/50/75, side-impact CBTAfs/ns 0/75/100, turn-across CCFtap/CMFtap 50.
+    impact_overlaps: list[float] | None = None
     # Side-impact scenarios (CMCscp, CBTAfs, CBTAns) measure impact across the VUT
     # LENGTH instead of width (EuroNCAP Protocol §1.2.5).
     side_impact: bool = False
@@ -406,8 +418,10 @@ class Config(BaseModel):
     })
     vut_speed_suffix: str = "VUT"
     impact_suffix: str = "Imp"
-    # Impact-overlap is a protocol *variant* parameter (10/25/50/75/90 ...). NM_04 checks the
-    # filename token is one of these; exact-overlap correctness stays with CH_SC_16/17.
+    # Coarse cross-family fallback set for the NM_04 filename-token check. Used only for a family
+    # whose scenarios entry omits its own impact_overlaps grid; per-family grids (which genuinely
+    # differ - see ScenarioProtocol.impact_overlaps) take precedence. Exact-overlap correctness
+    # stays with CH_SC_16/17.
     allowed_impact_overlaps: list[float] = [0, 10, 25, 50, 75, 90, 100]
     # ---- Associated / affix files (CH_NM_03, CH_FB_01) ----
     # Files that ship beside the 7 base-named files, named with a fixed affix around {base}.
@@ -490,6 +504,14 @@ class Config(BaseModel):
             if tag_upper.startswith(key.upper()):
                 return self.scenarios[key]
         return None
+
+    def impact_overlaps_for(self, scenario_tag: str) -> list[float]:
+        """Allowed filename impact-location %s for a family: its own protocol grid when set,
+        else the coarse cross-family `allowed_impact_overlaps` fallback."""
+        proto = self.scenario_protocol(scenario_tag)
+        if proto is not None and proto.impact_overlaps is not None:
+            return proto.impact_overlaps
+        return self.allowed_impact_overlaps
 
     def vut_dims(self) -> VehicleDimensions:
         return self.vehicle_dimensions.get("VUT", self.vehicle_dimensions["default_car"])

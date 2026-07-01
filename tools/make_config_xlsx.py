@@ -60,7 +60,7 @@ _KEY_SHEET = {
     "target_type_tokens": ("Site Settings", "Target-type tokens valid in the 4th filename slot: GVT, EPTa, EPTc, EBTa, EMT (CH_NM_02)."),
     "vut_speed_suffix": ("Site Settings", "Suffix marking the VUT-speed token in the filename (default VUT)."),
     "impact_suffix": ("Site Settings", "Suffix marking the impact-overlap token in the filename (default Imp)."),
-    "allowed_impact_overlaps": ("Site Settings", "Impact-overlap %s the filename token may take (CH_NM_02); exact value is checked by SC_16/17."),
+    "allowed_impact_overlaps": ("Site Settings", "Fallback impact-overlap %s for a family whose Scenarios-sheet impact_overlaps is blank (CH_NM_04); exact value is checked by SC_16/17."),
     "functional_file_pattern": ("Site Settings", "ENCAP functional/Test-Automation workbook name; {base} = scenario base name (CH_FB_01)."),
     "macro_file_pattern": ("Site Settings", "Macro workbook name; {base} = scenario base name (CH_NM_03)."),
     "review_file_pattern": ("Site Settings", "Manual review checklist name; {base} = scenario base name (optional, being phased out)."),
@@ -149,16 +149,18 @@ def build_workbook(raw: dict) -> Workbook:
 
     # ---- Scenarios ----
     ws = wb.create_sheet("Scenarios")
-    ws.append(["tag", "impact_tolerance_class", "vut_min_kmh", "vut_max_kmh", "side_impact", "has_sov"])
-    _style_header(ws, 6)
-    _autosize(ws, [12, 14, 12, 12, 12, 9])
+    ws.append(["tag", "impact_tolerance_class", "vut_min_kmh", "vut_max_kmh", "side_impact", "has_sov", "impact_overlaps"])
+    _style_header(ws, 7)
+    _autosize(ws, [12, 14, 12, 12, 12, 9, 26])
     dv_type = DataValidation(type="list", formula1='"longitudinal,crossing,head-on"', allow_blank=False)
     ws.add_data_validation(dv_type)
     for tag, proto in raw.get("scenarios", {}).items():
         speed = proto.get("vut_speed_range_kmh") or [None, None]
+        overlaps = proto.get("impact_overlaps")
         ws.append([
             tag, proto.get("impact_tolerance_class") or proto.get("type") or "longitudinal", speed[0], speed[1],
             bool(proto.get("side_impact", False)), bool(proto.get("has_sov", False)),
+            ", ".join(str(int(v)) for v in overlaps) if overlaps else None,
         ])
         dv_type.add(ws.cell(row=ws.max_row, column=2))
 
